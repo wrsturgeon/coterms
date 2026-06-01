@@ -1,0 +1,5 @@
+**/.direnv
+**/result
+**/rustc-ice-*
+**/target
+**/vgcore.*

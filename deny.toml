@@ -1,0 +1,21 @@
+[graph]
+all-features = true
+
+
+[licenses]
+allow = [
+  "Apache-2.0",
+  "MIT",
+  "Unicode-3.0", # unicode-ident
+]
+confidence-threshold = 0.8
+exceptions = []
+
+
+[bans]
+multiple-versions = "deny"
+
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
