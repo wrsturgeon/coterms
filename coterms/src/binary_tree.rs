@@ -1,7 +1,7 @@
 use {
     crate::{
-        AnyLeaf, AnyNode, AnySlot, Dual, DualError, ErasedLeaf, ErasedNode, ErasedSlot, Frontier,
-        RootedHole, RootedLeaf, RootedPath, any_leaf, any_slot, check_dual_roundtrip, root,
+        AnyLeaf, AnyNode, AnySlot, Dual, DualError, ErasedLeaf, ErasedNode, ErasedSlot, Field,
+        Frontier, RootedHole, RootedLeaf, RootedPath, any_leaf, any_slot, check_dual_roundtrip,
         root_hole, typed_node,
     },
     ahash::{HashMap, HashSet, HashSetExt as _},
@@ -43,16 +43,21 @@ impl Dual for BinaryTree {
     type Slot = BinaryTreeSlot;
 
     #[inline]
-    fn fields(node: BinaryTreeNode) -> Result<HashSet<AnySlot>, BinaryTreeLeaf> {
+    fn fields(node: Self::Node) -> Result<HashSet<crate::Field<Self>>, <Self as Dual>::Leaf> {
         match node {
             BinaryTreeNode::Leaf => Err(BinaryTreeLeaf::Leaf),
-            BinaryTreeNode::Branch => Ok([BinaryTreeSlot::BranchLhs, BinaryTreeSlot::BranchRhs]
-                .into_iter()
-                .map(|slot| AnySlot {
-                    index: slot.into(),
+            BinaryTreeNode::Branch => Ok([
+                Field {
+                    slot: BinaryTreeSlot::BranchLhs,
                     ty: TypeId::of::<Self>(),
-                })
-                .collect()),
+                },
+                Field {
+                    slot: BinaryTreeSlot::BranchRhs,
+                    ty: TypeId::of::<Self>(),
+                },
+            ]
+            .into_iter()
+            .collect()),
         }
     }
 
@@ -212,7 +217,7 @@ fn just_a_leaf() -> Frontier {
                 index: BinaryTreeLeaf::Leaf.into(),
                 ty: TypeId::of::<BinaryTree>(),
             },
-            path: root::<BinaryTree>(),
+            path: Arc::new(RootedPath::Root),
         }]
         .into_iter()
         .collect(),
@@ -229,7 +234,7 @@ fn just_a_branch() -> Frontier {
                     ty: TypeId::of::<BinaryTree>(),
                 },
                 path: Arc::new(RootedPath::Step {
-                    path: root::<BinaryTree>(),
+                    path: Arc::new(RootedPath::Root),
                     slot: any_slot::<BinaryTree>(BinaryTreeSlot::BranchLhs),
                 }),
             },
@@ -239,7 +244,7 @@ fn just_a_branch() -> Frontier {
                     ty: TypeId::of::<BinaryTree>(),
                 },
                 path: Arc::new(RootedPath::Step {
-                    path: root::<BinaryTree>(),
+                    path: Arc::new(RootedPath::Root),
                     slot: any_slot::<BinaryTree>(BinaryTreeSlot::BranchRhs),
                 }),
             },
@@ -251,7 +256,7 @@ fn just_a_branch() -> Frontier {
 
 fn one_more_branch_on_the_left() -> Frontier {
     let left_branch = Arc::new(RootedPath::Step {
-        path: root::<BinaryTree>(),
+        path: Arc::new(RootedPath::Root),
         slot: any_slot::<BinaryTree>(BinaryTreeSlot::BranchLhs),
     });
     Frontier {
@@ -283,7 +288,7 @@ fn one_more_branch_on_the_left() -> Frontier {
                     ty: TypeId::of::<BinaryTree>(),
                 },
                 path: Arc::new(RootedPath::Step {
-                    path: root::<BinaryTree>(),
+                    path: Arc::new(RootedPath::Root),
                     slot: any_slot::<BinaryTree>(BinaryTreeSlot::BranchRhs),
                 }),
             },
@@ -297,7 +302,7 @@ impl BinaryTree {
     #[inline]
     fn dual(&self) -> Frontier {
         let mut leaves: HashSet<RootedLeaf> = HashSet::new();
-        let () = self.to_leaves(&mut leaves, root::<Self>());
+        let () = self.to_leaves(&mut leaves, Arc::new(RootedPath::Root));
         Frontier {
             holes: HashSet::new(),
             leaves,

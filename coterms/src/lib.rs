@@ -81,9 +81,7 @@ struct RootedLeaf {
 /// all the way up to the global root.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 enum RootedPath {
-    Root {
-        ty: TypeId,
-    },
+    Root,
     Step {
         path: Arc<Self>,
         /// The particular slot into which this value is inserted.
@@ -94,6 +92,15 @@ enum RootedPath {
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 struct RootedHole {
     path: Arc<RootedPath>,
+    ty: TypeId,
+}
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+struct Field<D>
+where
+    D: Dual,
+{
+    slot: D::Slot,
     ty: TypeId,
 }
 
@@ -109,7 +116,7 @@ trait Dual: 'static + Sized {
         + Into<ErasedSlot>
         + TryFrom<ErasedSlot, Error = ErasedSlot>
         + Into<Self::Node>;
-    fn fields(node: Self::Node) -> Result<HashSet<AnySlot>, Self::Leaf>;
+    fn fields(node: Self::Node) -> Result<HashSet<Field<Self>>, Self::Leaf>;
     // TODO: The below shouldn't need a `HashMap` at all if we hash-cons internal structure!
     fn from_nodes(
         nodes: &HashMap<Arc<RootedPath>, AnyNode>,
@@ -171,12 +178,7 @@ impl Frontier {
                 };
             }
         }
-        D::from_nodes(
-            &nodes,
-            Arc::new(RootedPath::Root {
-                ty: TypeId::of::<D>(),
-            }),
-        )
+        D::from_nodes(&nodes, Arc::new(RootedPath::Root))
     }
 }
 
@@ -213,21 +215,12 @@ where
     }
 }
 
-fn root<D>() -> Arc<RootedPath>
-where
-    D: Dual,
-{
-    Arc::new(RootedPath::Root {
-        ty: TypeId::of::<D>(),
-    })
-}
-
 fn root_hole<D>() -> RootedHole
 where
     D: Dual,
 {
     RootedHole {
-        path: root::<D>(),
+        path: Arc::new(RootedPath::Root),
         ty: TypeId::of::<D>(),
     }
 }
@@ -281,15 +274,14 @@ macro_rules! check_dual_roundtrip {
         #[::pbt::pbt]
         fn node_fields_node_roundtrip(&node: &<$D as Dual>::Node) {
             match <$D as Dual>::fields(node) {
-                Ok(slots) => {
-                    for any_slot in slots {
+                Ok(fields) => {
+                    for field in fields {
                         // TODO: CRUCIAL: this might not be a `D`!
                         // We need a global `fn(AnySlot) -> AnyNode`.
-                        let slot = $crate::typed_slot::<$D>(&any_slot).unwrap();
-                        let roundtrip: <$D as Dual>::Node = slot.into();
+                        let roundtrip: <$D as Dual>::Node = field.slot.into();
                         assert_eq!(
                             node, roundtrip,
-                            "{node:?} -> {slot:?} -> {roundtrip:?} =/= {node:?}",
+                            "{node:?} -> {field:?} -> {roundtrip:?} =/= {node:?}",
                         )
                     }
                 }
@@ -318,10 +310,13 @@ macro_rules! check_dual_roundtrip {
         fn slot_node_slot_roundtrip(&slot: &<$D as Dual>::Slot) {
             let node: <$D as Dual>::Node = slot.into();
             let roundtrip = <$D as Dual>::fields(node);
-            let any_slot = $crate::any_slot::<$D>(slot);
+            let field = $crate::Field {
+                slot,
+                ty: TypeId::of::<$D>(),
+            };
             assert!(
-                roundtrip.as_ref().is_ok_and(|set| set.contains(&any_slot)),
-                "{slot:?} -> {node:?} -> {roundtrip:?} doesn't contain {any_slot:?}",
+                roundtrip.as_ref().is_ok_and(|set| set.contains(&field)),
+                "{slot:?} -> {node:?} -> {roundtrip:?} doesn't contain {field:?}",
             )
         }
 
