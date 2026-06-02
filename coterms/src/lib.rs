@@ -15,12 +15,25 @@ mod binary_tree;
 mod incremental;
 
 use {
-    ahash::{HashMap, HashMapExt as _, HashSet},
+    ahash::{HashMap, HashMapExt as _, HashSet, RandomState},
     alloc::sync::Arc,
     core::{any::TypeId, fmt},
     pbt::Pbt,
-    std::collections::hash_map,
+    std::{
+        collections::hash_map,
+        sync::{PoisonError, RwLock},
+    },
 };
+
+static REGISTRY: RwLock<Registry> = RwLock::new(Registry {
+    #[expect(clippy::unusual_byte_groupings, reason = "readability")]
+    dispatch: HashMap::with_hasher(RandomState::with_seeds(
+        0xBAAD_5EED_BAAD_C0DE,
+        0xC0DE_CAFE_DECAF_BAD,
+        0xDEFEC8ED__BAAD_D00D,
+        0x1337_1337_1337_1337,
+    )),
+});
 
 #[derive(Debug, Eq, PartialEq)]
 enum DualError {
@@ -33,19 +46,9 @@ enum DualError {
     MistypedLeaf(AnyLeaf, TypeId),
     MistypedNode(AnyNode, TypeId),
     MistypedSlot(AnySlot, TypeId),
+    RegistryPoisoned,
+    UnregisteredType(TypeId),
 }
-
-#[repr(transparent)]
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Pbt)]
-struct ErasedLeaf(usize);
-
-#[repr(transparent)]
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Pbt)]
-struct ErasedNode(usize);
-
-#[repr(transparent)]
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Pbt)]
-struct ErasedSlot(usize);
 
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 struct AnyLeaf {
@@ -65,10 +68,37 @@ struct AnySlot {
     ty: TypeId,
 }
 
+struct ErasedConversions {
+    leaf: fn(ErasedLeaf) -> Result<ErasedNode, DualError>,
+    slot: fn(ErasedSlot) -> Result<ErasedNode, DualError>,
+}
+
+#[repr(transparent)]
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Pbt)]
+struct ErasedLeaf(usize);
+
+#[repr(transparent)]
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Pbt)]
+struct ErasedNode(usize);
+
+#[repr(transparent)]
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Pbt)]
+struct ErasedSlot(usize);
+
 #[derive(Debug, Eq, PartialEq)]
 struct Frontier {
     holes: HashSet<RootedHole>,
     leaves: HashSet<RootedLeaf>,
+}
+
+struct Registry {
+    dispatch: HashMap<TypeId, ErasedConversions>,
+}
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+struct RootedHole {
+    path: Arc<RootedPath>,
+    ty: TypeId,
 }
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -81,27 +111,14 @@ struct RootedLeaf {
 /// all the way up to the global root.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 enum RootedPath {
-    Root,
+    Root {
+        ty: TypeId,
+    },
     Step {
         path: Arc<Self>,
         /// The particular slot into which this value is inserted.
         slot: AnySlot,
     },
-}
-
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
-struct RootedHole {
-    path: Arc<RootedPath>,
-    ty: TypeId,
-}
-
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
-struct Field<D>
-where
-    D: Dual,
-{
-    slot: D::Slot,
-    ty: TypeId,
 }
 
 trait Dual: 'static + Sized {
@@ -116,13 +133,52 @@ trait Dual: 'static + Sized {
         + Into<ErasedSlot>
         + TryFrom<ErasedSlot, Error = ErasedSlot>
         + Into<Self::Node>;
-    fn fields(node: Self::Node) -> Result<HashSet<Field<Self>>, Self::Leaf>;
+    fn fields(node: Self::Node) -> Result<HashSet<Self::Slot>, Self::Leaf>;
     // TODO: The below shouldn't need a `HashMap` at all if we hash-cons internal structure!
     fn from_nodes(
         nodes: &HashMap<Arc<RootedPath>, AnyNode>,
         path: Arc<RootedPath>,
     ) -> Result<Self, DualError>;
+    fn register(registry: &mut Registry);
+    /// The type with which this slot should be filled.
+    fn slot_type(slot: Self::Slot) -> TypeId;
     fn to_leaves(&self, leaves: &mut HashSet<RootedLeaf>, path: Arc<RootedPath>);
+}
+
+impl TryFrom<AnyLeaf> for AnyNode {
+    type Error = DualError;
+
+    #[inline]
+    fn try_from(value: AnyLeaf) -> Result<Self, Self::Error> {
+        #[expect(clippy::map_err_ignore, reason = "this error type is amorphous")]
+        let registry = REGISTRY.read().map_err(|_| DualError::RegistryPoisoned)?;
+        let conversions = registry
+            .dispatch
+            .get(&value.ty)
+            .ok_or(DualError::UnregisteredType(value.ty))?;
+        Ok(Self {
+            index: (conversions.leaf)(value.index)?,
+            ty: value.ty,
+        })
+    }
+}
+
+impl TryFrom<AnySlot> for AnyNode {
+    type Error = DualError;
+
+    #[inline]
+    fn try_from(value: AnySlot) -> Result<Self, Self::Error> {
+        #[expect(clippy::map_err_ignore, reason = "this error type is amorphous")]
+        let registry = REGISTRY.read().map_err(|_| DualError::RegistryPoisoned)?;
+        let conversions = registry
+            .dispatch
+            .get(&value.ty)
+            .ok_or(DualError::UnregisteredType(value.ty))?;
+        Ok(Self {
+            index: (conversions.slot)(value.index)?,
+            ty: value.ty,
+        })
+    }
 }
 
 impl Frontier {
@@ -133,15 +189,15 @@ impl Frontier {
     where
         D: Dual,
     {
+        #[expect(clippy::map_err_ignore, reason = "this error type is amorphous")]
+        let () = D::register(&mut *REGISTRY.write().map_err(|_| DualError::RegistryPoisoned)?);
         if !self.holes.is_empty() {
             return Err(DualError::Incomplete(self.holes.clone()));
         }
         let mut nodes: HashMap<Arc<RootedPath>, AnyNode> = HashMap::new();
         #[expect(clippy::iter_over_hash_type, reason = "Order doesn't matter.")]
         for leaf in &self.leaves {
-            // TODO: CRUCIAL: this might not be a `D`!
-            // We need a global `fn(AnySlot) -> AnyNode`.
-            let leaf_node: AnyNode = any_node::<D>(typed_leaf::<D>(&leaf.leaf)?.into());
+            let leaf_node: AnyNode = leaf.leaf.clone().try_into()?;
             let () = match nodes.entry(Arc::clone(&leaf.path)) {
                 hash_map::Entry::Vacant(vacant) => {
                     let _: &mut AnyNode = vacant.insert(leaf_node);
@@ -158,9 +214,7 @@ impl Frontier {
             };
             let mut visitor = Arc::clone(&leaf.path);
             'walk_up: while let RootedPath::Step { ref path, ref slot } = *visitor {
-                // TODO: CRUCIAL: this might not be a `D`!
-                // We need a global map from `TypeId` to `fn(ErasedSlot) -> ErasedNode`.
-                let node: AnyNode = any_node::<D>(typed_slot::<D>(slot)?.into());
+                let node: AnyNode = slot.clone().try_into()?;
                 visitor = Arc::clone(path);
                 let () = match nodes.entry(Arc::clone(&visitor)) {
                     hash_map::Entry::Vacant(vacant) => {
@@ -178,7 +232,47 @@ impl Frontier {
                 };
             }
         }
-        D::from_nodes(&nodes, Arc::new(RootedPath::Root))
+        D::from_nodes(
+            &nodes,
+            Arc::new(RootedPath::Root {
+                ty: TypeId::of::<D>(),
+            }),
+        )
+    }
+}
+
+impl Registry {
+    #[inline]
+    fn register<D>(&mut self)
+    where
+        D: Dual,
+    {
+        let ty = TypeId::of::<D>();
+        let _: Option<_> = self.dispatch.insert(
+            ty,
+            ErasedConversions {
+                leaf: |erased_leaf| {
+                    let leaf: D::Leaf = erased_leaf.try_into().map_err(|index| {
+                        DualError::InvalidLeaf(AnyLeaf {
+                            index,
+                            ty: TypeId::of::<D>(),
+                        })
+                    })?;
+                    let node: D::Node = leaf.into();
+                    Ok(node.into())
+                },
+                slot: |erased_slot| {
+                    let slot: D::Slot = erased_slot.try_into().map_err(|index| {
+                        DualError::InvalidSlot(AnySlot {
+                            index,
+                            ty: TypeId::of::<D>(),
+                        })
+                    })?;
+                    let node: D::Node = slot.into();
+                    Ok(node.into())
+                },
+            },
+        );
     }
 }
 
@@ -215,12 +309,34 @@ where
     }
 }
 
+#[inline]
+fn register<D>() -> Result<(), DualError>
+where
+    D: Dual,
+{
+    #[expect(clippy::map_err_ignore, reason = "this error type is amorphous")]
+    if REGISTRY
+        .read()
+        .map_err(|_| DualError::RegistryPoisoned)?
+        .dispatch
+        .contains_key(&TypeId::of::<D>())
+    {
+        return Ok(());
+    }
+    #[expect(clippy::map_err_ignore, reason = "this error type is amorphous")]
+    let () = D::register(&mut *REGISTRY.write().map_err(|_| DualError::RegistryPoisoned)?);
+    Ok(())
+}
+
+#[inline]
 fn root_hole<D>() -> RootedHole
 where
     D: Dual,
 {
     RootedHole {
-        path: Arc::new(RootedPath::Root),
+        path: Arc::new(RootedPath::Root {
+            ty: TypeId::of::<D>(),
+        }),
         ty: TypeId::of::<D>(),
     }
 }
@@ -272,16 +388,30 @@ where
 macro_rules! check_dual_roundtrip {
     ($D:ty) => {
         #[::pbt::pbt]
+        fn leaf_node_usize_commutes(&leaf: &<$D as Dual>::Leaf) {
+            #[expect(clippy::as_conversions, reason = "[don draper voice] that's what the tests are for!")]
+            let leaf_usize = leaf as usize;
+            let node: <$D as Dual>::Node = leaf.into();
+            #[expect(clippy::as_conversions, reason = "[don draper voice] that's what the tests are for!")]
+            let node_usize = node as usize;
+            assert_eq!(
+                leaf_usize, node_usize,
+                "\r\n{leaf:?} --> {leaf_usize} (leaf)\r\n|        !\r\nV        V\r\n{node:?} --> {node_usize} (node)",
+            );
+        }
+
+        #[::pbt::pbt]
         fn node_fields_node_roundtrip(&node: &<$D as Dual>::Node) {
+            let () = <$D as Dual>::register(&mut *$crate::REGISTRY.write().unwrap());
             match <$D as Dual>::fields(node) {
                 Ok(fields) => {
+                    let any_node: AnyNode = $crate::any_node::<$D>(node);
+                    let expected = Ok(any_node.clone());
                     for field in fields {
-                        // TODO: CRUCIAL: this might not be a `D`!
-                        // We need a global `fn(AnySlot) -> AnyNode`.
-                        let roundtrip: <$D as Dual>::Node = field.slot.into();
+                        let roundtrip: Result<AnyNode, _> = any_slot::<$D>(field).try_into();
                         assert_eq!(
-                            node, roundtrip,
-                            "{node:?} -> {field:?} -> {roundtrip:?} =/= {node:?}",
+                            roundtrip, expected,
+                            "{node:?} -> {field:?} -> {roundtrip:?} =/= {any_node:?}",
                         )
                     }
                 }
@@ -310,13 +440,9 @@ macro_rules! check_dual_roundtrip {
         fn slot_node_slot_roundtrip(&slot: &<$D as Dual>::Slot) {
             let node: <$D as Dual>::Node = slot.into();
             let roundtrip = <$D as Dual>::fields(node);
-            let field = $crate::Field {
-                slot,
-                ty: TypeId::of::<$D>(),
-            };
             assert!(
-                roundtrip.as_ref().is_ok_and(|set| set.contains(&field)),
-                "{slot:?} -> {node:?} -> {roundtrip:?} doesn't contain {field:?}",
+                roundtrip.as_ref().is_ok_and(|set| set.contains(&slot)),
+                "{slot:?} -> {node:?} -> {roundtrip:?} doesn't contain {slot:?}",
             )
         }
 
