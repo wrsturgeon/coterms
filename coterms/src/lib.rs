@@ -145,42 +145,6 @@ trait Dual: 'static + Sized {
     fn to_leaves(&self, leaves: &mut HashSet<RootedLeaf>, path: Arc<RootedPath>);
 }
 
-impl TryFrom<AnyLeaf> for AnyNode {
-    type Error = DualError;
-
-    #[inline]
-    fn try_from(value: AnyLeaf) -> Result<Self, Self::Error> {
-        #[expect(clippy::map_err_ignore, reason = "this error type is amorphous")]
-        let registry = REGISTRY.read().map_err(|_| DualError::RegistryPoisoned)?;
-        let conversions = registry
-            .dispatch
-            .get(&value.ty)
-            .ok_or(DualError::UnregisteredType(value.ty))?;
-        Ok(Self {
-            index: (conversions.leaf)(value.index)?,
-            ty: value.ty,
-        })
-    }
-}
-
-impl TryFrom<AnySlot> for AnyNode {
-    type Error = DualError;
-
-    #[inline]
-    fn try_from(value: AnySlot) -> Result<Self, Self::Error> {
-        #[expect(clippy::map_err_ignore, reason = "this error type is amorphous")]
-        let registry = REGISTRY.read().map_err(|_| DualError::RegistryPoisoned)?;
-        let conversions = registry
-            .dispatch
-            .get(&value.ty)
-            .ok_or(DualError::UnregisteredType(value.ty))?;
-        Ok(Self {
-            index: (conversions.slot)(value.index)?,
-            ty: value.ty,
-        })
-    }
-}
-
 impl Frontier {
     // TODO: use `AsRef` or `Borrow` to allow skipping `ty: TypeId` fields
     // so we can run PBT on frontiers without having to generate `TypeId`s
@@ -189,15 +153,16 @@ impl Frontier {
     where
         D: Dual,
     {
+        let () = register::<D>()?;
         #[expect(clippy::map_err_ignore, reason = "this error type is amorphous")]
-        let () = D::register(&mut *REGISTRY.write().map_err(|_| DualError::RegistryPoisoned)?);
+        let registry = REGISTRY.read().map_err(|_| DualError::RegistryPoisoned)?;
         if !self.holes.is_empty() {
             return Err(DualError::Incomplete(self.holes.clone()));
         }
         let mut nodes: HashMap<Arc<RootedPath>, AnyNode> = HashMap::new();
         #[expect(clippy::iter_over_hash_type, reason = "Order doesn't matter.")]
         for leaf in &self.leaves {
-            let leaf_node: AnyNode = leaf.leaf.clone().try_into()?;
+            let leaf_node: AnyNode = registry.leaf(&leaf.leaf)?;
             let () = match nodes.entry(Arc::clone(&leaf.path)) {
                 hash_map::Entry::Vacant(vacant) => {
                     let _: &mut AnyNode = vacant.insert(leaf_node);
@@ -214,7 +179,7 @@ impl Frontier {
             };
             let mut visitor = Arc::clone(&leaf.path);
             'walk_up: while let RootedPath::Step { ref path, ref slot } = *visitor {
-                let node: AnyNode = slot.clone().try_into()?;
+                let node: AnyNode = registry.slot(slot)?;
                 visitor = Arc::clone(path);
                 let () = match nodes.entry(Arc::clone(&visitor)) {
                     hash_map::Entry::Vacant(vacant) => {
@@ -242,6 +207,19 @@ impl Frontier {
 }
 
 impl Registry {
+    #[inline]
+    fn leaf(&self, &AnyLeaf { index, ty }: &AnyLeaf) -> Result<AnyNode, DualError> {
+        let f = self
+            .dispatch
+            .get(&ty)
+            .ok_or(DualError::UnregisteredType(ty))?
+            .leaf;
+        Ok(AnyNode {
+            index: f(index)?,
+            ty,
+        })
+    }
+
     #[inline]
     fn register<D>(&mut self)
     where
@@ -273,6 +251,19 @@ impl Registry {
                 },
             },
         );
+    }
+
+    #[inline]
+    fn slot(&self, &AnySlot { index, ty }: &AnySlot) -> Result<AnyNode, DualError> {
+        let f = self
+            .dispatch
+            .get(&ty)
+            .ok_or(DualError::UnregisteredType(ty))?
+            .slot;
+        Ok(AnyNode {
+            index: f(index)?,
+            ty,
+        })
     }
 }
 
@@ -403,12 +394,14 @@ macro_rules! check_dual_roundtrip {
         #[::pbt::pbt]
         fn node_fields_node_roundtrip(&node: &<$D as Dual>::Node) {
             let () = <$D as Dual>::register(&mut *$crate::REGISTRY.write().unwrap());
+            #[expect(clippy::map_err_ignore, reason = "this error type is amorphous")]
+            let registry = $crate::REGISTRY.read().unwrap();
             match <$D as Dual>::fields(node) {
                 Ok(fields) => {
                     let any_node: AnyNode = $crate::any_node::<$D>(node);
                     let expected = Ok(any_node.clone());
                     for field in fields {
-                        let roundtrip: Result<AnyNode, _> = any_slot::<$D>(field).try_into();
+                        let roundtrip: Result<AnyNode, _> = registry.slot(&any_slot::<$D>(field));
                         assert_eq!(
                             roundtrip, expected,
                             "{node:?} -> {field:?} -> {roundtrip:?} =/= {any_node:?}",
