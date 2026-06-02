@@ -13,6 +13,7 @@ extern crate alloc;
 
 mod binary_tree;
 mod incremental;
+mod option;
 
 use {
     ahash::{HashMap, HashMapExt as _, HashSet, RandomState},
@@ -134,14 +135,19 @@ trait Dual: 'static + Sized {
         + TryFrom<ErasedSlot, Error = ErasedSlot>
         + Into<Self::Node>;
     fn fields(node: Self::Node) -> Result<HashSet<Self::Slot>, Self::Leaf>;
-    // TODO: The below shouldn't need a `HashMap` at all if we hash-cons internal structure!
-    fn from_nodes(
+    // TODO: Instead of passing a `HashMap`, just hand this an already-unerased `Self::Node`
+    // and have it generate a *local* continuation (via `Slot`s instead of `Path`s).
+    // Then, fields of any type -- which are already referenced --
+    // can be erased as `(*const _, TypeId)` and dispatched behind the scenes.
+    fn from_node(
         nodes: &HashMap<Arc<RootedPath>, AnyNode>,
         path: Arc<RootedPath>,
     ) -> Result<Self, DualError>;
     fn register(registry: &mut Registry);
     /// The type with which this slot should be filled.
     fn slot_type(slot: Self::Slot) -> TypeId;
+    // TODO: Local-ize & rename `to_leaf`.
+    // See the above note on `from_node` for details.
     fn to_leaves(&self, leaves: &mut HashSet<RootedLeaf>, path: Arc<RootedPath>);
 }
 
@@ -197,7 +203,8 @@ impl Frontier {
                 };
             }
         }
-        D::from_nodes(
+        // TODO: The below shouldn't need a `HashMap` at all if we hash-cons internal structure!
+        D::from_node(
             &nodes,
             Arc::new(RootedPath::Root {
                 ty: TypeId::of::<D>(),

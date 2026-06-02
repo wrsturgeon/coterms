@@ -12,27 +12,27 @@ use {
 
 /// ADT: 1 + (Self * Self)
 #[derive(Clone, Debug, Eq, Hash, PartialEq, Pbt)]
-enum BinaryTree {
+pub enum BinaryTree {
     Branch { lhs: Arc<Self>, rhs: Arc<Self> },
     Leaf,
 }
 
 #[repr(usize)]
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Pbt)]
-enum BinaryTreeLeaf {
+pub enum BinaryTreeLeaf {
     Leaf = 0,
 }
 
 #[repr(usize)]
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Pbt)]
-enum BinaryTreeNode {
+pub enum BinaryTreeNode {
     Leaf = 0, // <-- Yes, `Node` needs to include everything, even leaves
     Branch = 1,
 }
 
 #[repr(usize)]
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Pbt)]
-enum BinaryTreeSlot {
+pub enum BinaryTreeSlot {
     BranchLhs,
     BranchRhs,
 }
@@ -53,7 +53,7 @@ impl Dual for BinaryTree {
     }
 
     #[inline]
-    fn from_nodes(
+    fn from_node(
         nodes: &HashMap<Arc<RootedPath>, AnyNode>,
         path: Arc<RootedPath>,
     ) -> Result<Self, DualError> {
@@ -64,17 +64,17 @@ impl Dual for BinaryTree {
         Ok(match node {
             BinaryTreeNode::Leaf => Self::Leaf,
             BinaryTreeNode::Branch => Self::Branch {
-                lhs: Arc::new(Self::from_nodes(
+                lhs: Arc::new(Self::from_node(
                     nodes,
                     Arc::new(RootedPath::Step {
-                        slot: any_slot::<BinaryTree>(BinaryTreeSlot::BranchLhs),
+                        slot: any_slot::<Self>(BinaryTreeSlot::BranchLhs),
                         path: Arc::clone(&path),
                     }),
                 )?),
-                rhs: Arc::new(Self::from_nodes(
+                rhs: Arc::new(Self::from_node(
                     nodes,
                     Arc::new(RootedPath::Step {
-                        slot: any_slot::<BinaryTree>(BinaryTreeSlot::BranchRhs),
+                        slot: any_slot::<Self>(BinaryTreeSlot::BranchRhs),
                         path: Arc::clone(&path),
                     }),
                 )?),
@@ -99,7 +99,7 @@ impl Dual for BinaryTree {
         match *self {
             BinaryTree::Leaf => {
                 let _: bool = leaves.insert(RootedLeaf {
-                    leaf: any_leaf::<BinaryTree>(BinaryTreeLeaf::Leaf),
+                    leaf: any_leaf::<Self>(BinaryTreeLeaf::Leaf),
                     path,
                 });
             }
@@ -107,14 +107,14 @@ impl Dual for BinaryTree {
                 let () = lhs.to_leaves(
                     leaves,
                     Arc::new(RootedPath::Step {
-                        slot: any_slot::<BinaryTree>(BinaryTreeSlot::BranchLhs),
+                        slot: any_slot::<Self>(BinaryTreeSlot::BranchLhs),
                         path: Arc::clone(&path),
                     }),
                 );
                 let () = rhs.to_leaves(
                     leaves,
                     Arc::new(RootedPath::Step {
-                        slot: any_slot::<BinaryTree>(BinaryTreeSlot::BranchRhs),
+                        slot: any_slot::<Self>(BinaryTreeSlot::BranchRhs),
                         path,
                     }),
                 );
