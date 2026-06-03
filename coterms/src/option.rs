@@ -1,13 +1,23 @@
 use {
     crate::{
-        AnyNode, Dual, DualError, ErasedLeaf, ErasedNode, ErasedSlot, Frontier, Registry,
-        RootedLeaf, RootedPath, any_leaf, any_slot, binary_tree::BinaryTree, typed_node,
+        AnyNode, AnyTerm, Dual, DualError, ErasedBranch, ErasedLeaf, ErasedNode, ErasedSlot,
+        Fields, Frontier, Registry, RootedLeaf, RootedPath, any_leaf, any_slot,
+        binary_tree::BinaryTree, register, typed_node,
     },
     ahash::{HashMap, HashSet, HashSetExt as _},
     alloc::sync::Arc,
-    core::{any::TypeId, iter},
+    core::{
+        any::{Any, TypeId},
+        iter,
+    },
     pbt::Pbt,
 };
+
+#[repr(usize)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Pbt)]
+pub enum OptionBranch {
+    Some = 1,
+}
 
 #[repr(usize)]
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Pbt)]
@@ -32,38 +42,35 @@ impl<T> Dual for Option<T>
 where
     T: Dual,
 {
+    type Branch = OptionBranch;
     type Leaf = OptionLeaf;
     type Node = OptionNode;
     type Slot = OptionSlot;
 
     #[inline]
-    fn fields(node: Self::Node) -> Result<HashSet<Self::Slot>, Self::Leaf> {
-        match node {
-            OptionNode::None => Err(OptionLeaf::None),
-            OptionNode::Some => Ok(iter::once(OptionSlot::Some0).collect()),
+    fn fields(&self) -> Result<HashMap<Self::Slot, AnyTerm<'_>>, Self::Leaf> {
+        match *self {
+            None => Err(OptionLeaf::None),
+            Some(ref some_0) => {
+                Ok(iter::once((OptionSlot::Some0, AnyTerm::new::<T>(some_0))).collect())
+            }
         }
     }
 
     #[inline]
-    fn from_node(
-        nodes: &HashMap<Arc<RootedPath>, AnyNode>,
-        path: Arc<RootedPath>,
-    ) -> Result<Self, DualError> {
-        let Some(index): Option<&AnyNode> = nodes.get(&path) else {
-            return Err(DualError::MissingNode(path));
-        };
-        let node: Self::Node = typed_node::<Self>(index)?;
+    fn from_node<F>(node: Self::Node, fields: F) -> Result<Self, DualError>
+    where
+        F: Fields<Self>,
+    {
         Ok(match node {
             OptionNode::None => None,
-            #[expect(clippy::todo, reason = "TODO")]
-            OptionNode::Some => Some(todo!("we need some dynamic `T::from_node`")),
+            OptionNode::Some => Some(fields.field(OptionSlot::Some0)?),
         })
     }
 
     #[inline]
-    fn register(registry: &mut Registry) {
-        registry.register::<T>();
-        registry.register::<Self>();
+    fn register_all_field_types() {
+        let () = register::<T>();
     }
 
     #[inline]
@@ -72,25 +79,14 @@ where
             OptionSlot::Some0 => TypeId::of::<T>(),
         }
     }
+}
 
+impl From<OptionBranch> for OptionNode {
     #[inline]
-    fn to_leaves(&self, leaves: &mut HashSet<RootedLeaf>, path: Arc<RootedPath>) {
-        match *self {
-            None => {
-                let _: bool = leaves.insert(RootedLeaf {
-                    leaf: any_leaf::<Self>(OptionLeaf::None),
-                    path,
-                });
-            }
-            Some(ref t) => {
-                let () = t.to_leaves(
-                    leaves,
-                    Arc::new(RootedPath::Step {
-                        path,
-                        slot: any_slot::<Self>(OptionSlot::Some0),
-                    }),
-                );
-            }
+    #[expect(clippy::as_conversions, reason = "safe by `repr(..)`")]
+    fn from(value: OptionBranch) -> Self {
+        match value {
+            OptionBranch::Some => OptionNode::Some,
         }
     }
 }
@@ -105,13 +101,21 @@ impl From<OptionLeaf> for OptionNode {
     }
 }
 
-impl From<OptionSlot> for OptionNode {
+impl From<OptionSlot> for OptionBranch {
     #[inline]
     #[expect(clippy::as_conversions, reason = "safe by `repr(..)`")]
     fn from(value: OptionSlot) -> Self {
         match value {
             OptionSlot::Some0 => Self::Some,
         }
+    }
+}
+
+impl From<OptionBranch> for ErasedBranch {
+    #[inline]
+    #[expect(clippy::as_conversions, reason = "safe by `repr(..)`")]
+    fn from(value: OptionBranch) -> Self {
+        Self(value as usize)
     }
 }
 
@@ -136,6 +140,18 @@ impl From<OptionSlot> for ErasedSlot {
     #[expect(clippy::as_conversions, reason = "safe by `repr(..)`")]
     fn from(value: OptionSlot) -> Self {
         Self(value as usize)
+    }
+}
+
+impl TryFrom<ErasedBranch> for OptionBranch {
+    type Error = ErasedBranch;
+
+    #[inline]
+    fn try_from(value: ErasedBranch) -> Result<Self, Self::Error> {
+        Ok(match value.0 {
+            1 => Self::Some,
+            _ => return Err(value),
+        })
     }
 }
 
@@ -176,25 +192,6 @@ impl TryFrom<ErasedSlot> for OptionSlot {
     }
 }
 
-#[inline]
-#[expect(clippy::ref_option, reason = "consistency")]
-fn dual<T>(opt: &Option<T>) -> Frontier
-where
-    T: Dual,
-{
-    let mut leaves: HashSet<RootedLeaf> = HashSet::new();
-    let () = opt.to_leaves(
-        &mut leaves,
-        Arc::new(RootedPath::Root {
-            ty: TypeId::of::<Option<T>>(),
-        }),
-    );
-    Frontier {
-        holes: HashSet::new(),
-        leaves,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use {
@@ -208,7 +205,7 @@ mod tests {
     #[cfg_attr(not(miri), pbt)]
     #[cfg_attr(miri, pbt(100))]
     fn term_coterm_term_roundtrip(term: &Option<BinaryTree>) {
-        let coterm = dual(term);
+        let coterm = Frontier::complete(term);
         let roundtrip: Result<Option<BinaryTree>, DualError> = coterm.dual();
         let expected = Ok(term.clone());
         assert_eq!(

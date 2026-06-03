@@ -1,12 +1,15 @@
 use {
     crate::{
-        AnyLeaf, AnyNode, AnySlot, Dual, DualError, ErasedLeaf, ErasedNode, ErasedSlot, Frontier,
-        Registry, RootedHole, RootedLeaf, RootedPath, any_leaf, any_slot, check_dual_roundtrip,
-        root_hole, typed_node,
+        AnyLeaf, AnyNode, AnySlot, AnyTerm, Dual, DualError, ErasedBranch, ErasedLeaf, ErasedNode,
+        ErasedSlot, Frontier, Registry, RootedHole, RootedLeaf, RootedPath, any_leaf, any_slot,
+        check_dual_roundtrip, typed_node,
     },
     ahash::{HashMap, HashSet, HashSetExt as _},
     alloc::sync::Arc,
-    core::{any::TypeId, iter},
+    core::{
+        any::{Any, TypeId},
+        iter,
+    },
     pbt::Pbt,
 };
 
@@ -15,6 +18,12 @@ use {
 pub enum BinaryTree {
     Branch { lhs: Arc<Self>, rhs: Arc<Self> },
     Leaf,
+}
+
+#[repr(usize)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Pbt)]
+pub enum BinaryTreeBranch {
+    Branch = 1,
 }
 
 #[repr(usize)]
@@ -38,53 +47,42 @@ pub enum BinaryTreeSlot {
 }
 
 impl Dual for BinaryTree {
+    type Branch = BinaryTreeBranch;
     type Leaf = BinaryTreeLeaf;
     type Node = BinaryTreeNode;
     type Slot = BinaryTreeSlot;
 
     #[inline]
-    fn fields(node: Self::Node) -> Result<HashSet<Self::Slot>, <Self as Dual>::Leaf> {
-        match node {
-            BinaryTreeNode::Leaf => Err(BinaryTreeLeaf::Leaf),
-            BinaryTreeNode::Branch => Ok([BinaryTreeSlot::BranchLhs, BinaryTreeSlot::BranchRhs]
-                .into_iter()
-                .collect()),
+    fn fields(&self) -> Result<HashMap<Self::Slot, AnyTerm<'_>>, <Self as Dual>::Leaf> {
+        match *self {
+            Self::Leaf => Err(BinaryTreeLeaf::Leaf),
+            Self::Branch { ref lhs, ref rhs } => Ok([
+                (BinaryTreeSlot::BranchLhs, AnyTerm::new::<Self>(lhs)),
+                (BinaryTreeSlot::BranchRhs, AnyTerm::new::<Self>(rhs)),
+            ]
+            .into_iter()
+            .collect()),
         }
     }
 
     #[inline]
-    fn from_node(
-        nodes: &HashMap<Arc<RootedPath>, AnyNode>,
-        path: Arc<RootedPath>,
-    ) -> Result<Self, DualError> {
-        let Some(index): Option<&AnyNode> = nodes.get(&path) else {
-            return Err(DualError::MissingNode(path));
-        };
-        let node: Self::Node = typed_node::<Self>(index)?;
+    fn from_node<F>(node: Self::Node, fields: F) -> Result<Self, DualError>
+    where
+        F: crate::Fields<Self>,
+    {
         Ok(match node {
             BinaryTreeNode::Leaf => Self::Leaf,
             BinaryTreeNode::Branch => Self::Branch {
-                lhs: Arc::new(Self::from_node(
-                    nodes,
-                    Arc::new(RootedPath::Step {
-                        slot: any_slot::<Self>(BinaryTreeSlot::BranchLhs),
-                        path: Arc::clone(&path),
-                    }),
-                )?),
-                rhs: Arc::new(Self::from_node(
-                    nodes,
-                    Arc::new(RootedPath::Step {
-                        slot: any_slot::<Self>(BinaryTreeSlot::BranchRhs),
-                        path: Arc::clone(&path),
-                    }),
-                )?),
+                lhs: Arc::new(fields.field::<Self>(BinaryTreeSlot::BranchLhs)?),
+                rhs: Arc::new(fields.field::<Self>(BinaryTreeSlot::BranchRhs)?),
             },
         })
     }
 
     #[inline]
-    fn register(registry: &mut Registry) {
-        let () = registry.register::<Self>();
+    fn register_all_field_types() {
+        // you *could* put `Self` here (and, in macros, we should for full generality);
+        // it'll just do nothing, since `register` short-circuits on already-registered types.
     }
 
     #[inline]
@@ -93,32 +91,14 @@ impl Dual for BinaryTree {
             BinaryTreeSlot::BranchLhs | BinaryTreeSlot::BranchRhs => TypeId::of::<Self>(),
         }
     }
+}
 
+impl From<BinaryTreeBranch> for BinaryTreeNode {
     #[inline]
-    fn to_leaves(&self, leaves: &mut HashSet<RootedLeaf>, path: Arc<RootedPath>) {
-        match *self {
-            BinaryTree::Leaf => {
-                let _: bool = leaves.insert(RootedLeaf {
-                    leaf: any_leaf::<Self>(BinaryTreeLeaf::Leaf),
-                    path,
-                });
-            }
-            BinaryTree::Branch { ref lhs, ref rhs } => {
-                let () = lhs.to_leaves(
-                    leaves,
-                    Arc::new(RootedPath::Step {
-                        slot: any_slot::<Self>(BinaryTreeSlot::BranchLhs),
-                        path: Arc::clone(&path),
-                    }),
-                );
-                let () = rhs.to_leaves(
-                    leaves,
-                    Arc::new(RootedPath::Step {
-                        slot: any_slot::<Self>(BinaryTreeSlot::BranchRhs),
-                        path,
-                    }),
-                );
-            }
+    #[expect(clippy::as_conversions, reason = "safe by `repr(..)`")]
+    fn from(value: BinaryTreeBranch) -> Self {
+        match value {
+            BinaryTreeBranch::Branch => BinaryTreeNode::Branch,
         }
     }
 }
@@ -133,13 +113,21 @@ impl From<BinaryTreeLeaf> for BinaryTreeNode {
     }
 }
 
-impl From<BinaryTreeSlot> for BinaryTreeNode {
+impl From<BinaryTreeSlot> for BinaryTreeBranch {
     #[inline]
     #[expect(clippy::as_conversions, reason = "safe by `repr(..)`")]
     fn from(value: BinaryTreeSlot) -> Self {
         match value {
-            BinaryTreeSlot::BranchLhs | BinaryTreeSlot::BranchRhs => BinaryTreeNode::Branch,
+            BinaryTreeSlot::BranchLhs | BinaryTreeSlot::BranchRhs => BinaryTreeBranch::Branch,
         }
+    }
+}
+
+impl From<BinaryTreeBranch> for ErasedBranch {
+    #[inline]
+    #[expect(clippy::as_conversions, reason = "safe by `repr(..)`")]
+    fn from(value: BinaryTreeBranch) -> Self {
+        Self(value as usize)
     }
 }
 
@@ -164,6 +152,18 @@ impl From<BinaryTreeSlot> for ErasedSlot {
     #[expect(clippy::as_conversions, reason = "safe by `repr(..)`")]
     fn from(value: BinaryTreeSlot) -> Self {
         Self(value as usize)
+    }
+}
+
+impl TryFrom<ErasedBranch> for BinaryTreeBranch {
+    type Error = ErasedBranch;
+
+    #[inline]
+    fn try_from(value: ErasedBranch) -> Result<Self, Self::Error> {
+        Ok(match value.0 {
+            1 => Self::Branch,
+            _ => return Err(value),
+        })
     }
 }
 
@@ -207,8 +207,14 @@ impl TryFrom<ErasedSlot> for BinaryTreeSlot {
 
 fn hole_at_root() -> Frontier {
     Frontier {
-        holes: [root_hole::<BinaryTree>()].into_iter().collect(),
+        holes: [RootedHole {
+            path: Arc::new(RootedPath::Root),
+            ty: TypeId::of::<BinaryTree>(),
+        }]
+        .into_iter()
+        .collect(),
         leaves: [].into_iter().collect(),
+        ty: TypeId::of::<BinaryTree>(),
     }
 }
 
@@ -220,12 +226,11 @@ fn just_a_leaf() -> Frontier {
                 index: BinaryTreeLeaf::Leaf.into(),
                 ty: TypeId::of::<BinaryTree>(),
             },
-            path: Arc::new(RootedPath::Root {
-                ty: TypeId::of::<BinaryTree>(),
-            }),
+            path: Arc::new(RootedPath::Root),
         }]
         .into_iter()
         .collect(),
+        ty: TypeId::of::<BinaryTree>(),
     }
 }
 
@@ -239,9 +244,7 @@ fn just_a_branch() -> Frontier {
                     ty: TypeId::of::<BinaryTree>(),
                 },
                 path: Arc::new(RootedPath::Step {
-                    path: Arc::new(RootedPath::Root {
-                        ty: TypeId::of::<BinaryTree>(),
-                    }),
+                    path: Arc::new(RootedPath::Root),
                     slot: any_slot::<BinaryTree>(BinaryTreeSlot::BranchLhs),
                 }),
             },
@@ -251,23 +254,20 @@ fn just_a_branch() -> Frontier {
                     ty: TypeId::of::<BinaryTree>(),
                 },
                 path: Arc::new(RootedPath::Step {
-                    path: Arc::new(RootedPath::Root {
-                        ty: TypeId::of::<BinaryTree>(),
-                    }),
+                    path: Arc::new(RootedPath::Root),
                     slot: any_slot::<BinaryTree>(BinaryTreeSlot::BranchRhs),
                 }),
             },
         ]
         .into_iter()
         .collect(),
+        ty: TypeId::of::<BinaryTree>(),
     }
 }
 
 fn one_more_branch_on_the_left() -> Frontier {
     let left_branch = Arc::new(RootedPath::Step {
-        path: Arc::new(RootedPath::Root {
-            ty: TypeId::of::<BinaryTree>(),
-        }),
+        path: Arc::new(RootedPath::Root),
         slot: any_slot::<BinaryTree>(BinaryTreeSlot::BranchLhs),
     });
     Frontier {
@@ -299,32 +299,14 @@ fn one_more_branch_on_the_left() -> Frontier {
                     ty: TypeId::of::<BinaryTree>(),
                 },
                 path: Arc::new(RootedPath::Step {
-                    path: Arc::new(RootedPath::Root {
-                        ty: TypeId::of::<BinaryTree>(),
-                    }),
+                    path: Arc::new(RootedPath::Root),
                     slot: any_slot::<BinaryTree>(BinaryTreeSlot::BranchRhs),
                 }),
             },
         ]
         .into_iter()
         .collect(),
-    }
-}
-
-impl BinaryTree {
-    #[inline]
-    fn dual(&self) -> Frontier {
-        let mut leaves: HashSet<RootedLeaf> = HashSet::new();
-        let () = self.to_leaves(
-            &mut leaves,
-            Arc::new(RootedPath::Root {
-                ty: TypeId::of::<Self>(),
-            }),
-        );
-        Frontier {
-            holes: HashSet::new(),
-            leaves,
-        }
+        ty: TypeId::of::<BinaryTree>(),
     }
 }
 
@@ -336,13 +318,13 @@ mod tests {
 
     #[test]
     fn dual_leaf() {
-        assert_eq!(BinaryTree::Leaf.dual(), just_a_leaf());
+        assert_eq!(Frontier::complete(&BinaryTree::Leaf), just_a_leaf());
     }
 
     #[cfg_attr(not(miri), pbt)]
     #[cfg_attr(miri, pbt(100))]
     fn term_coterm_term_roundtrip(term: &BinaryTree) {
-        let coterm = term.dual();
+        let coterm = Frontier::complete(term);
         let roundtrip: Result<BinaryTree, DualError> = coterm.dual();
         let expected = Ok(term.clone());
         assert_eq!(
