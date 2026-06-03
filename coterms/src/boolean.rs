@@ -1,192 +1,191 @@
 use {
     crate::{
-        AnyNode, AnyTerm, Dual, DualError, ErasedBranch, ErasedLeaf, ErasedNode, ErasedSlot,
-        Fields, Frontier, Registry, RootedLeaf, RootedPath, any_leaf, any_slot,
-        binary_tree::BinaryTree, register, typed_node,
+        AnyLeaf, AnyNode, AnySlot, AnyTerm, Dual, DualError, ErasedBranch, ErasedLeaf, ErasedNode,
+        ErasedSlot, Frontier, Registry, RootedHole, RootedLeaf, RootedPath, any_leaf, any_slot,
+        check_dual_roundtrip, typed_node,
     },
     ahash::{HashMap, HashSet, HashSetExt as _},
     alloc::sync::Arc,
     core::{
         any::{Any, TypeId},
         iter,
+        marker::PhantomData,
     },
     pbt::Pbt,
 };
 
-#[repr(usize)]
+/// ADT: 1 + 1
+#[derive(Clone, Debug, Eq, Hash, PartialEq, Pbt)]
+pub enum Boolean {
+    False,
+    True,
+}
+
+// #[repr(usize)]
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Pbt)]
-pub enum OptionBranch {
-    Some = 1,
+pub enum BooleanBranch {
+    // n/a
 }
 
 #[repr(usize)]
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Pbt)]
-pub enum OptionLeaf {
-    None = 0,
+pub enum BooleanLeaf {
+    False = 0,
+    True = 1,
 }
 
 #[repr(usize)]
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Pbt)]
-pub enum OptionNode {
-    None = 0, // <-- Yes, `Node` needs to include everything, even leaves
-    Some = 1,
+pub enum BooleanNode {
+    False = 0,
+    True = 1,
 }
 
-#[repr(usize)]
+// #[repr(usize)]
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Pbt)]
-pub enum OptionSlot {
-    Some0,
+pub enum BooleanSlot {
+    // n/a
 }
 
-impl<T> Dual for Option<T>
-where
-    T: Dual,
-{
-    type Branch = OptionBranch;
-    type Leaf = OptionLeaf;
-    type Node = OptionNode;
-    type Slot = OptionSlot;
+impl Dual for Boolean {
+    type Branch = BooleanBranch;
+    type Leaf = BooleanLeaf;
+    type Node = BooleanNode;
+    type Slot = BooleanSlot;
 
     #[inline]
-    fn fields(&self) -> Result<HashMap<Self::Slot, AnyTerm<'_>>, Self::Leaf> {
+    fn fields(&self) -> Result<HashMap<Self::Slot, AnyTerm<'_>>, <Self as Dual>::Leaf> {
         match *self {
-            None => Err(OptionLeaf::None),
-            Some(ref some_0) => {
-                Ok(iter::once((OptionSlot::Some0, AnyTerm::new::<T>(some_0))).collect())
-            }
+            Self::False => Err(BooleanLeaf::False),
+            Self::True => Err(BooleanLeaf::True),
         }
     }
 
     #[inline]
     fn from_node<F>(node: Self::Node, fields: F) -> Result<Self, DualError>
     where
-        F: Fields<Self>,
+        F: crate::Fields<Self>,
     {
         Ok(match node {
-            OptionNode::None => None,
-            OptionNode::Some => Some(fields.field(OptionSlot::Some0)?),
+            BooleanNode::False => Self::False,
+            BooleanNode::True => Self::True,
         })
     }
 
     #[inline]
     fn register_all_field_types() {
-        let () = register::<T>();
+        // you *could* put `Self` here (and, in macros, we should for full generality);
+        // it'll just do nothing, since `register` short-circuits on already-registered types.
     }
 
     #[inline]
     fn slot_type(slot: Self::Slot) -> TypeId {
-        match slot {
-            OptionSlot::Some0 => TypeId::of::<T>(),
-        }
+        match slot {}
     }
 }
 
-impl From<OptionBranch> for OptionNode {
+impl From<BooleanBranch> for BooleanNode {
     #[inline]
     #[expect(clippy::as_conversions, reason = "safe by `repr(..)`")]
-    fn from(value: OptionBranch) -> Self {
+    fn from(value: BooleanBranch) -> Self {
+        match value {}
+    }
+}
+
+impl From<BooleanLeaf> for BooleanNode {
+    #[inline]
+    #[expect(clippy::as_conversions, reason = "safe by `repr(..)`")]
+    fn from(value: BooleanLeaf) -> Self {
         match value {
-            OptionBranch::Some => OptionNode::Some,
+            BooleanLeaf::False => BooleanNode::False,
+            BooleanLeaf::True => BooleanNode::True,
         }
     }
 }
 
-impl From<OptionLeaf> for OptionNode {
+impl From<BooleanSlot> for BooleanBranch {
     #[inline]
     #[expect(clippy::as_conversions, reason = "safe by `repr(..)`")]
-    fn from(value: OptionLeaf) -> Self {
-        match value {
-            OptionLeaf::None => OptionNode::None,
-        }
+    fn from(value: BooleanSlot) -> Self {
+        match value {}
     }
 }
 
-impl From<OptionSlot> for OptionBranch {
+impl From<BooleanBranch> for ErasedBranch {
     #[inline]
     #[expect(clippy::as_conversions, reason = "safe by `repr(..)`")]
-    fn from(value: OptionSlot) -> Self {
-        match value {
-            OptionSlot::Some0 => Self::Some,
-        }
-    }
-}
-
-impl From<OptionBranch> for ErasedBranch {
-    #[inline]
-    #[expect(clippy::as_conversions, reason = "safe by `repr(..)`")]
-    fn from(value: OptionBranch) -> Self {
+    fn from(value: BooleanBranch) -> Self {
         Self(value as usize)
     }
 }
 
-impl From<OptionLeaf> for ErasedLeaf {
+impl From<BooleanLeaf> for ErasedLeaf {
     #[inline]
     #[expect(clippy::as_conversions, reason = "safe by `repr(..)`")]
-    fn from(value: OptionLeaf) -> Self {
+    fn from(value: BooleanLeaf) -> Self {
         Self(value as usize)
     }
 }
 
-impl From<OptionNode> for ErasedNode {
+impl From<BooleanNode> for ErasedNode {
     #[inline]
     #[expect(clippy::as_conversions, reason = "safe by `repr(..)`")]
-    fn from(value: OptionNode) -> Self {
+    fn from(value: BooleanNode) -> Self {
         Self(value as usize)
     }
 }
 
-impl From<OptionSlot> for ErasedSlot {
+impl From<BooleanSlot> for ErasedSlot {
     #[inline]
     #[expect(clippy::as_conversions, reason = "safe by `repr(..)`")]
-    fn from(value: OptionSlot) -> Self {
+    fn from(value: BooleanSlot) -> Self {
         Self(value as usize)
     }
 }
 
-impl TryFrom<ErasedBranch> for OptionBranch {
+impl TryFrom<ErasedBranch> for BooleanBranch {
     type Error = ErasedBranch;
 
     #[inline]
     fn try_from(value: ErasedBranch) -> Result<Self, Self::Error> {
         Ok(match value.0 {
-            1 => Self::Some,
             _ => return Err(value),
         })
     }
 }
 
-impl TryFrom<ErasedLeaf> for OptionLeaf {
+impl TryFrom<ErasedLeaf> for BooleanLeaf {
     type Error = ErasedLeaf;
 
     #[inline]
     fn try_from(value: ErasedLeaf) -> Result<Self, Self::Error> {
         Ok(match value.0 {
-            0 => Self::None,
+            0 => Self::False,
+            1 => Self::True,
             _ => return Err(value),
         })
     }
 }
 
-impl TryFrom<ErasedNode> for OptionNode {
+impl TryFrom<ErasedNode> for BooleanNode {
     type Error = ErasedNode;
 
     #[inline]
     fn try_from(value: ErasedNode) -> Result<Self, Self::Error> {
         Ok(match value.0 {
-            0 => Self::None,
-            1 => Self::Some,
+            0 => Self::False,
+            1 => Self::True,
             _ => return Err(value),
         })
     }
 }
 
-impl TryFrom<ErasedSlot> for OptionSlot {
+impl TryFrom<ErasedSlot> for BooleanSlot {
     type Error = ErasedSlot;
 
     #[inline]
     fn try_from(value: ErasedSlot) -> Result<Self, Self::Error> {
         Ok(match value.0 {
-            0 => Self::Some0,
             _ => return Err(value),
         })
     }
@@ -194,18 +193,13 @@ impl TryFrom<ErasedSlot> for OptionSlot {
 
 #[cfg(test)]
 mod tests {
-    use {
-        super::*,
-        crate::{DualError, check_dual_roundtrip},
-        pbt::pbt,
-    };
+    use {super::*, crate::DualError, pbt::pbt};
 
-    check_dual_roundtrip!(Option<BinaryTree>);
+    check_dual_roundtrip!(Boolean);
 
-    #[pbt]
-    fn term_coterm_term_roundtrip(term: &Option<BinaryTree>) {
+    fn term_coterm_term_roundtrip(term: &Boolean) {
         let coterm = Frontier::complete(term);
-        let roundtrip: Result<Option<BinaryTree>, DualError> = coterm.dual();
+        let roundtrip: Result<Boolean, DualError> = coterm.dual();
         let expected = Ok(term.clone());
         assert_eq!(
             roundtrip, expected,

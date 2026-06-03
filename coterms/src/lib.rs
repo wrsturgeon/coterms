@@ -12,8 +12,11 @@
 extern crate alloc;
 
 mod binary_tree;
+mod boolean;
 mod incremental;
+mod nth_boolean;
 mod option;
+mod peano;
 
 use {
     ahash::{HashMap, HashMapExt as _, HashSet, HashSetExt as _, RandomState},
@@ -57,10 +60,6 @@ enum DualError {
     },
     MistypedLeaf(AnyLeaf, TypeId),
     MistypedNode(AnyNode, TypeId),
-    MistypedRoot {
-        decoded_as: TypeId,
-        encoded_as: TypeId,
-    },
     MistypedSlot(AnySlot, TypeId),
     UnregisteredType(TypeId),
 }
@@ -113,6 +112,7 @@ struct ErasedConversions {
     ) -> Result<HashMap<ErasedSlot, AnyTerm<'term>>, ErasedLeaf>,
     leaf: fn(ErasedLeaf) -> Result<ErasedNode, DualError>,
     slot: fn(ErasedSlot) -> Result<ErasedNode, DualError>,
+    slot_type: fn(ErasedSlot) -> Result<TypeId, DualError>,
 }
 
 #[repr(transparent)]
@@ -131,11 +131,14 @@ struct ErasedNode(usize);
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Pbt)]
 struct ErasedSlot(usize);
 
-#[derive(Debug, Eq, PartialEq)]
-struct Frontier {
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct Frontier<D>
+where
+    D: Dual,
+{
     holes: HashSet<RootedHole>,
     leaves: HashSet<RootedLeaf>,
-    ty: TypeId,
+    _phantom: PhantomData<D>,
 }
 
 struct LazyFields<'pinup> {
@@ -157,21 +160,21 @@ struct RootedHole {
     ty: TypeId,
 }
 
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq, Pbt)]
 struct RootedLeaf {
-    leaf: AnyLeaf,
+    leaf: ErasedLeaf,
     path: Arc<RootedPath>,
 }
 
 /// A type-erased path from some node
 /// all the way up to the global root.
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq, Pbt)]
 enum RootedPath {
     Root,
     Step {
         path: Arc<Self>,
         /// The particular slot into which this value is inserted.
-        slot: AnySlot,
+        slot: ErasedSlot,
     },
 }
 
@@ -256,12 +259,12 @@ impl<'term> AnyTerm<'term> {
     }
 }
 
-impl Frontier {
+impl<D> Frontier<D>
+where
+    D: Dual,
+{
     #[inline]
-    pub fn complete<D>(d: &D) -> Self
-    where
-        D: Dual,
-    {
+    pub fn complete(d: &D) -> Self {
         let mut leaves = HashSet::new();
         let () = register::<D>();
         #[expect(
@@ -281,9 +284,9 @@ impl Frontier {
         )
         .expect("INTERNAL ERROR (`coterms`)");
         Self {
+            _phantom: PhantomData,
             holes: HashSet::new(),
             leaves,
-            ty: TypeId::of::<D>(),
         }
     }
 
@@ -296,13 +299,7 @@ impl Frontier {
     ) -> Result<(), DualError> {
         let () = match registry.fields(term)? {
             Err(leaf) => {
-                let _: bool = leaves.insert(RootedLeaf {
-                    leaf: AnyLeaf {
-                        index: leaf,
-                        ty: term.ty,
-                    },
-                    path,
-                });
+                let _: bool = leaves.insert(RootedLeaf { leaf, path });
             }
             Ok(fields) =>
             {
@@ -310,10 +307,7 @@ impl Frontier {
                 for (slot, field) in fields {
                     let extended_path = Arc::new(RootedPath::Step {
                         path: Arc::clone(&path),
-                        slot: AnySlot {
-                            index: slot,
-                            ty: term.ty,
-                        },
+                        slot,
                     });
                     let () = Self::complete_leaves(&field, extended_path, leaves, registry)?;
                 }
@@ -329,17 +323,7 @@ impl Frontier {
         clippy::unwrap_in_result,
         reason = "a poisoned lock means another panic already occurred"
     )]
-    pub fn dual<D>(&self) -> Result<D, DualError>
-    where
-        D: Dual,
-    {
-        let ty = TypeId::of::<D>();
-        if ty != self.ty {
-            return Err(DualError::MistypedRoot {
-                decoded_as: ty,
-                encoded_as: self.ty,
-            });
-        }
+    pub fn dual(&self) -> Result<D, DualError> {
         let () = register::<D>();
         #[expect(
             clippy::unwrap_used,
@@ -353,39 +337,30 @@ impl Frontier {
         let mut pinup: HashMap<Arc<RootedPath>, AnyNode> = HashMap::new();
         #[expect(clippy::iter_over_hash_type, reason = "order doesn't matter")]
         for leaf in &self.leaves {
-            let leaf_node: AnyNode = registry.leaf(&leaf.leaf)?;
-            let () = match pinup.entry(Arc::clone(&leaf.path)) {
-                hash_map::Entry::Vacant(vacant) => {
-                    let _: &mut AnyNode = vacant.insert(leaf_node);
-                }
-                hash_map::Entry::Occupied(occupied) => {
-                    if *occupied.get() != leaf_node {
-                        return Err(DualError::Conflict(
-                            Arc::clone(&leaf.path),
-                            occupied.get().clone(),
-                            leaf_node,
-                        ));
-                    }
-                }
-            };
-            let mut visitor = Arc::clone(&leaf.path);
-            'walk_up: while let RootedPath::Step { ref path, ref slot } = *visitor {
-                let node: AnyNode = registry.slot(slot)?;
-                visitor = Arc::clone(path);
-                let () = match pinup.entry(Arc::clone(&visitor)) {
-                    hash_map::Entry::Vacant(vacant) => {
-                        let _: &mut AnyNode = vacant.insert(node);
-                    }
-                    hash_map::Entry::Occupied(occupied) => {
-                        if *occupied.get() != node {
-                            return Err(DualError::Conflict(
-                                Arc::clone(&visitor),
-                                occupied.get().clone(),
-                                node,
-                            ));
-                        }
-                    }
-                };
+            let parent_type = Self::pin_up(&leaf.path, &mut pinup, &registry)?;
+            let dispatch = registry
+                .dispatch
+                .get(&parent_type)
+                .ok_or(DualError::UnregisteredType(parent_type))?;
+            let erased_node = (dispatch.leaf)(leaf.leaf)?;
+            let maybe_existing: Option<_> = pinup.insert(
+                Arc::clone(&leaf.path),
+                AnyNode {
+                    index: erased_node,
+                    ty: parent_type,
+                },
+            );
+            if let Some(existing) = maybe_existing
+                && existing.index != erased_node
+            {
+                return Err(DualError::Conflict(
+                    Arc::clone(&leaf.path),
+                    existing,
+                    AnyNode {
+                        index: erased_node,
+                        ty: parent_type,
+                    },
+                ));
             }
         }
         let root_path = Arc::new(RootedPath::Root);
@@ -401,6 +376,38 @@ impl Frontier {
             },
         )
     }
+
+    #[inline]
+    fn pin_up(
+        path: &RootedPath,
+        pinup: &mut HashMap<Arc<RootedPath>, AnyNode>,
+        registry: &Registry,
+    ) -> Result<TypeId, DualError> {
+        let RootedPath::Step {
+            path: ref parent_path,
+            slot,
+        } = *path
+        else {
+            return Ok(TypeId::of::<D>());
+        };
+        if let Some(existing) = pinup.get(parent_path) {
+            // TODO: consistency check (should produce a PBT failure in the meantime)
+            return Ok(existing.ty);
+        }
+        let parent_type = Self::pin_up(parent_path, pinup, registry)?;
+        let dispatch = registry
+            .dispatch
+            .get(&parent_type)
+            .ok_or(DualError::UnregisteredType(parent_type))?;
+        let _toctou: Option<_> = pinup.insert(
+            Arc::clone(parent_path),
+            AnyNode {
+                index: (dispatch.slot)(slot)?,
+                ty: parent_type,
+            },
+        );
+        (dispatch.slot_type)(slot)
+    }
 }
 
 impl<D> Fields<D> for LazyFields<'_>
@@ -414,7 +421,7 @@ where
     {
         let path = Arc::new(RootedPath::Step {
             path: Arc::clone(&self.path),
-            slot: any_slot::<D>(slot),
+            slot: slot.into(),
         });
         let Some(any_node) = self.pinup.get(&path) else {
             return Err(DualError::MissingNode(path));
@@ -525,6 +532,15 @@ impl Registry {
                     let branch: D::Branch = slot.into();
                     let node: D::Node = branch.into();
                     Ok(node.into())
+                },
+                slot_type: |erased_slot| {
+                    let slot: D::Slot = erased_slot.try_into().map_err(|index| {
+                        DualError::InvalidSlot(AnySlot {
+                            index,
+                            ty: TypeId::of::<D>(),
+                        })
+                    })?;
+                    Ok(D::slot_type(slot))
                 },
             },
         );
@@ -733,6 +749,20 @@ macro_rules! check_dual_roundtrip {
                 roundtrip, expected,
                 "{slot:?} -> {tmp:?} -> {roundtrip:?} =/= {expected:?}",
             );
+        }
+
+        #[::pbt::pbt(100_000)]
+        fn unique_valid_frontier_per_term(leaves: &HashSet<RootedLeaf>) {
+            let coterm = Frontier::<$D> {
+                _phantom: core::marker::PhantomData,
+                holes: HashSet::new(),
+                leaves: leaves.clone(),
+            };
+            let Ok(term) = coterm.dual() else {
+                return;
+            };
+            let roundtrip = Frontier::complete(&term);
+            assert_eq!(roundtrip, coterm, "{coterm:?} -> {term:?} -> {roundtrip:?} =/= {coterm:?}");
         }
 
         #[::pbt::pbt]

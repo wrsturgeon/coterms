@@ -9,6 +9,7 @@ use {
     core::{
         any::{Any, TypeId},
         iter,
+        marker::PhantomData,
     },
     pbt::Pbt,
 };
@@ -205,8 +206,9 @@ impl TryFrom<ErasedSlot> for BinaryTreeSlot {
     }
 }
 
-fn hole_at_root() -> Frontier {
+fn hole_at_root() -> Frontier<BinaryTree> {
     Frontier {
+        _phantom: PhantomData,
         holes: [RootedHole {
             path: Arc::new(RootedPath::Root),
             ty: TypeId::of::<BinaryTree>(),
@@ -214,99 +216,80 @@ fn hole_at_root() -> Frontier {
         .into_iter()
         .collect(),
         leaves: [].into_iter().collect(),
-        ty: TypeId::of::<BinaryTree>(),
     }
 }
 
-fn just_a_leaf() -> Frontier {
+fn just_a_leaf() -> Frontier<BinaryTree> {
     Frontier {
+        _phantom: PhantomData,
         holes: [].into_iter().collect(),
         leaves: [RootedLeaf {
-            leaf: AnyLeaf {
-                index: BinaryTreeLeaf::Leaf.into(),
-                ty: TypeId::of::<BinaryTree>(),
-            },
+            leaf: BinaryTreeLeaf::Leaf.into(),
             path: Arc::new(RootedPath::Root),
         }]
         .into_iter()
         .collect(),
-        ty: TypeId::of::<BinaryTree>(),
     }
 }
 
-fn just_a_branch() -> Frontier {
+fn just_a_branch() -> Frontier<BinaryTree> {
     Frontier {
+        _phantom: PhantomData,
         holes: [].into_iter().collect(),
         leaves: [
             RootedLeaf {
-                leaf: AnyLeaf {
-                    index: BinaryTreeLeaf::Leaf.into(),
-                    ty: TypeId::of::<BinaryTree>(),
-                },
+                leaf: BinaryTreeLeaf::Leaf.into(),
                 path: Arc::new(RootedPath::Step {
                     path: Arc::new(RootedPath::Root),
-                    slot: any_slot::<BinaryTree>(BinaryTreeSlot::BranchLhs),
+                    slot: BinaryTreeSlot::BranchLhs.into(),
                 }),
             },
             RootedLeaf {
-                leaf: AnyLeaf {
-                    index: BinaryTreeLeaf::Leaf.into(),
-                    ty: TypeId::of::<BinaryTree>(),
-                },
+                leaf: BinaryTreeLeaf::Leaf.into(),
                 path: Arc::new(RootedPath::Step {
                     path: Arc::new(RootedPath::Root),
-                    slot: any_slot::<BinaryTree>(BinaryTreeSlot::BranchRhs),
+                    slot: BinaryTreeSlot::BranchRhs.into(),
                 }),
             },
         ]
         .into_iter()
         .collect(),
-        ty: TypeId::of::<BinaryTree>(),
     }
 }
 
-fn one_more_branch_on_the_left() -> Frontier {
+fn one_more_branch_on_the_left() -> Frontier<BinaryTree> {
     let left_branch = Arc::new(RootedPath::Step {
         path: Arc::new(RootedPath::Root),
-        slot: any_slot::<BinaryTree>(BinaryTreeSlot::BranchLhs),
+        slot: BinaryTreeSlot::BranchLhs.into(),
     });
     Frontier {
+        _phantom: PhantomData,
         holes: [].into_iter().collect(),
         leaves: [
             RootedLeaf {
-                leaf: AnyLeaf {
-                    index: BinaryTreeLeaf::Leaf.into(),
-                    ty: TypeId::of::<BinaryTree>(),
-                },
+                leaf: BinaryTreeLeaf::Leaf.into(),
                 path: Arc::new(RootedPath::Step {
                     path: Arc::clone(&left_branch),
-                    slot: any_slot::<BinaryTree>(BinaryTreeSlot::BranchLhs),
+                    slot: BinaryTreeSlot::BranchLhs.into(),
                 }),
             },
             RootedLeaf {
-                leaf: AnyLeaf {
-                    index: BinaryTreeLeaf::Leaf.into(),
-                    ty: TypeId::of::<BinaryTree>(),
-                },
+                leaf: BinaryTreeLeaf::Leaf.into(),
                 path: Arc::new(RootedPath::Step {
                     path: left_branch,
-                    slot: any_slot::<BinaryTree>(BinaryTreeSlot::BranchRhs),
+                    slot: BinaryTreeSlot::BranchRhs.into(),
                 }),
             },
             RootedLeaf {
-                leaf: AnyLeaf {
-                    index: BinaryTreeLeaf::Leaf.into(),
-                    ty: TypeId::of::<BinaryTree>(),
-                },
+                leaf: BinaryTreeLeaf::Leaf.into(),
                 path: Arc::new(RootedPath::Step {
                     path: Arc::new(RootedPath::Root),
-                    slot: any_slot::<BinaryTree>(BinaryTreeSlot::BranchRhs),
+                    slot: BinaryTreeSlot::BranchRhs.into(),
                 }),
             },
         ]
         .into_iter()
         .collect(),
-        ty: TypeId::of::<BinaryTree>(),
     }
 }
 
@@ -321,8 +304,7 @@ mod tests {
         assert_eq!(Frontier::complete(&BinaryTree::Leaf), just_a_leaf());
     }
 
-    #[cfg_attr(not(miri), pbt)]
-    #[cfg_attr(miri, pbt(100))]
+    #[pbt]
     fn term_coterm_term_roundtrip(term: &BinaryTree) {
         let coterm = Frontier::complete(term);
         let roundtrip: Result<BinaryTree, DualError> = coterm.dual();
