@@ -44,22 +44,36 @@ static REGISTRY: RwLock<Registry> = RwLock::new(Registry {
 // TODO: remove unused variants
 #[derive(Debug, Eq, PartialEq)]
 enum DualError {
-    Conflict(Arc<RootedPath>, AnyNode, AnyNode),
-    Incomplete(HashSet<RootedHole>),
+    Conflict {
+        at: Arc<RootedPath>,
+        existing: AnyNode,
+        incoming: AnyNode,
+    },
+    Incomplete {
+        holes: HashSet<RootedHole>,
+    },
     InvalidBranch(AnyBranch),
     InvalidLeaf(AnyLeaf),
     InvalidNode(AnyNode),
     InvalidSlot(AnySlot),
-    MissingNode(Arc<RootedPath>),
-    MissingSlot(AnySlot),
-    MistypedField {
-        actual_type: TypeId,
-        expected_type: TypeId,
-        slot: AnySlot,
+    MissingNode {
+        at: Arc<RootedPath>,
     },
-    MistypedLeaf(AnyLeaf, TypeId),
-    MistypedNode(AnyNode, TypeId),
-    MistypedSlot(AnySlot, TypeId),
+    MissingSlot {
+        local: AnySlot,
+    },
+    MistypedLeaf {
+        actual: AnyLeaf,
+        expected: TypeId,
+    },
+    MistypedNode {
+        actual: AnyNode,
+        expected: TypeId,
+    },
+    MistypedSlot {
+        actual: AnySlot,
+        expected: TypeId,
+    },
     UnregisteredType(TypeId),
 }
 
@@ -229,13 +243,18 @@ where
     where
         T: Dual,
     {
-        let any_term: &AnyTerm<'_> = self
-            .fields
-            .get(&slot)
-            .ok_or_else(|| DualError::MissingSlot(any_slot::<D>(slot)))?;
+        let any_term: &AnyTerm<'_> =
+            self.fields
+                .get(&slot)
+                .ok_or_else(|| DualError::MissingSlot {
+                    local: any_slot::<D>(slot),
+                })?;
         let ty = TypeId::of::<T>();
         if any_term.ty != ty {
-            return Err(DualError::MistypedSlot(any_slot::<D>(slot), any_term.ty));
+            return Err(DualError::MistypedSlot {
+                actual: any_slot::<D>(slot),
+                expected: any_term.ty,
+            });
         }
         // SAFETY: Assuming `AnyTerm` has been soundly constructed,
         // this reinterpretation is valid b/c `ty == ty` above.
@@ -330,7 +349,9 @@ where
         )]
         let registry = REGISTRY.read().unwrap();
         if !self.holes.is_empty() {
-            return Err(DualError::Incomplete(self.holes.clone()));
+            return Err(DualError::Incomplete {
+                holes: self.holes.clone(),
+            });
         }
         // TODO: This `HashMap` shouldn't be necessary at all if we hash-cons internal structure!
         let mut pinup: HashMap<Arc<RootedPath>, AnyNode> = HashMap::new();
@@ -349,7 +370,7 @@ where
         }
         let root_path = Arc::new(RootedPath::Root);
         let Some(root_any_node) = pinup.get(&root_path) else {
-            return Err(DualError::MissingNode(root_path));
+            return Err(DualError::MissingNode { at: root_path });
         };
         let root_node: D::Node = typed_node::<D>(root_any_node)?;
         D::from_node(
@@ -360,6 +381,54 @@ where
             },
         )
     }
+
+    // TODO:
+    /*
+    #[inline]
+    #[expect(
+        clippy::unwrap_in_result,
+        reason = "a poisoned lock means another panic already occurred"
+    )]
+    fn fill(&mut self, hole: &RootedHole, node: ErasedNode) -> Result<(), DualError> {
+        #[expect(
+            clippy::unwrap_used,
+            reason = "a poisoned lock means another panic already occurred"
+        )]
+        let registry = REGISTRY.read().unwrap();
+        let dispatch = registry
+            .dispatch
+            .get(&hole.ty)
+            .ok_or(DualError::UnregisteredType(hole.ty))?;
+        let fields: Result<HashSet<ErasedSlot>, ErasedLeaf> = dispatch.fields_of_node(node)?;
+        if !self.holes.remove(hole) {
+            return Err(DualError::MissingHole(hole.clone()));
+        }
+        let () = match fields {
+            Err(leaf) => {
+                let _dup: bool = self.leaves.insert(RootedLeaf {
+                    leaf,
+                    path: hole.path,
+                });
+                // TODO: do we need to check for consistency here?
+                // TODO: should we use a `HashMap<Arc<RootedPath>, ErasedLeaf>` instead?
+            }
+            Ok(slots) => {
+                for slot in slots {
+                    let _dup: bool = self.holes.insert(RootedHole {
+                        path: Arc::new(RootedPath::Step {
+                            path: hole.path,
+                            slot,
+                        }),
+                        ty: (dispatch.slot_type)(slot)?,
+                    });
+                    // TODO: do we need to check for consistency here?
+                    // TODO: should we use a `HashMap<Arc<RootedPath>, TypeId>` instead?
+                }
+            }
+        };
+        Ok(())
+    }
+    */
 
     #[inline]
     fn pin_up(
@@ -410,7 +479,11 @@ where
                 if *existing == node {
                     Ok(())
                 } else {
-                    Err(DualError::Conflict(path, existing.clone(), node))
+                    Err(DualError::Conflict {
+                        at: path,
+                        existing: existing.clone(),
+                        incoming: node,
+                    })
                 }
             }
         }
@@ -431,7 +504,7 @@ where
             slot: slot.into(),
         });
         let Some(any_node) = self.pinup.get(&path) else {
-            return Err(DualError::MissingNode(path));
+            return Err(DualError::MissingNode { at: path });
         };
         let node: T::Node = typed_node::<T>(any_node)?;
         T::from_node(
@@ -623,7 +696,10 @@ where
 {
     let ty = TypeId::of::<D>();
     if leaf.ty != ty {
-        return Err(DualError::MistypedLeaf(leaf.clone(), ty));
+        return Err(DualError::MistypedLeaf {
+            actual: leaf.clone(),
+            expected: ty,
+        });
     }
     leaf.index
         .try_into()
@@ -637,7 +713,10 @@ where
 {
     let ty = TypeId::of::<D>();
     if node.ty != ty {
-        return Err(DualError::MistypedNode(node.clone(), ty));
+        return Err(DualError::MistypedNode {
+            actual: node.clone(),
+            expected: ty,
+        });
     }
     node.index
         .try_into()
@@ -651,7 +730,10 @@ where
 {
     let ty = TypeId::of::<D>();
     if slot.ty != ty {
-        return Err(DualError::MistypedSlot(slot.clone(), ty));
+        return Err(DualError::MistypedSlot {
+            actual: slot.clone(),
+            expected: ty,
+        });
     }
     slot.index
         .try_into()
@@ -697,7 +779,7 @@ macro_rules! check_dual_roundtrip {
                     for (&slot, any_term) in &fields {
                         let slot_ty = <$D as Dual>::slot_type(slot);
                         assert_eq!(slot_ty, any_term.ty, "`slot_type` assigned `{slot:?} |-> {slot_ty:?}`, but this slot takes `{:?}`", any_term.ty);
-                        let other_branch: <$D as Dual>::Branch = branch.into();
+                        let other_branch: <$D as Dual>::Branch = slot.into();
                         assert_eq!(other_branch, branch, "slots {first_slot:?} and {slot:?} disagree on their branch");
                     }
                     let node: <$D as Dual>::Node = branch.into();

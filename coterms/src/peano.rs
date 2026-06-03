@@ -232,8 +232,8 @@ mod tests {
 
         let decoded = coterm.dual();
         assert!(
-            matches!(decoded, Err(DualError::Conflict(..))),
-            "{decoded:?} =/= Err(DualError::Conflict(..))",
+            matches!(decoded, Err(DualError::Conflict { .. })),
+            "{decoded:?} =/= Err(DualError::Conflict {{ .. }})",
         );
     }
 
