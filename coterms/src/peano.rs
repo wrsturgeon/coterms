@@ -65,6 +65,14 @@ impl Dual for Peano {
     }
 
     #[inline]
+    fn fields_of_node(node: Self::Node) -> Result<HashSet<Self::Slot>, Self::Leaf> {
+        match node {
+            PeanoNode::Zero => Err(PeanoLeaf::Zero),
+            PeanoNode::Successor => Ok(iter::once(PeanoSlot::Successor0).collect()),
+        }
+    }
+
+    #[inline]
     fn from_node<F>(node: Self::Node, fields: F) -> Result<Self, DualError>
     where
         F: crate::Fields<Self>,

@@ -62,6 +62,14 @@ impl Dual for Boolean {
     }
 
     #[inline]
+    fn fields_of_node(node: Self::Node) -> Result<HashSet<Self::Slot>, Self::Leaf> {
+        match node {
+            BooleanNode::False => Err(BooleanLeaf::False),
+            BooleanNode::True => Err(BooleanLeaf::True),
+        }
+    }
+
+    #[inline]
     fn from_node<F>(node: Self::Node, fields: F) -> Result<Self, DualError>
     where
         F: crate::Fields<Self>,

@@ -58,6 +58,14 @@ where
     }
 
     #[inline]
+    fn fields_of_node(node: Self::Node) -> Result<HashSet<Self::Slot>, Self::Leaf> {
+        match node {
+            OptionNode::None => Err(OptionLeaf::None),
+            OptionNode::Some => Ok(iter::once(OptionSlot::Some0).collect()),
+        }
+    }
+
+    #[inline]
     fn from_node<F>(node: Self::Node, fields: F) -> Result<Self, DualError>
     where
         F: Fields<Self>,

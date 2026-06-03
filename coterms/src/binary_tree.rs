@@ -67,6 +67,16 @@ impl Dual for BinaryTree {
     }
 
     #[inline]
+    fn fields_of_node(node: Self::Node) -> Result<HashSet<Self::Slot>, <Self as Dual>::Leaf> {
+        match node {
+            BinaryTreeNode::Leaf => Err(BinaryTreeLeaf::Leaf),
+            BinaryTreeNode::Branch => Ok([BinaryTreeSlot::BranchLhs, BinaryTreeSlot::BranchRhs]
+                .into_iter()
+                .collect()),
+        }
+    }
+
+    #[inline]
     fn from_node<F>(node: Self::Node, fields: F) -> Result<Self, DualError>
     where
         F: crate::Fields<Self>,

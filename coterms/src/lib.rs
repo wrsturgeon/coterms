@@ -41,42 +41,6 @@ static REGISTRY: RwLock<Registry> = RwLock::new(Registry {
     )),
 });
 
-// TODO: remove unused variants
-#[derive(Debug, Eq, PartialEq)]
-enum DualError {
-    Conflict {
-        at: Arc<RootedPath>,
-        existing: AnyNode,
-        incoming: AnyNode,
-    },
-    Incomplete {
-        holes: HashSet<RootedHole>,
-    },
-    InvalidBranch(AnyBranch),
-    InvalidLeaf(AnyLeaf),
-    InvalidNode(AnyNode),
-    InvalidSlot(AnySlot),
-    MissingNode {
-        at: Arc<RootedPath>,
-    },
-    MissingSlot {
-        local: AnySlot,
-    },
-    MistypedLeaf {
-        actual: AnyLeaf,
-        expected: TypeId,
-    },
-    MistypedNode {
-        actual: AnyNode,
-        expected: TypeId,
-    },
-    MistypedSlot {
-        actual: AnySlot,
-        expected: TypeId,
-    },
-    UnregisteredType(TypeId),
-}
-
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 struct AnyBranch {
     index: ErasedBranch,
@@ -117,15 +81,53 @@ where
     fields: HashMap<D::Slot, AnyTerm<'field>>,
 }
 
-struct ErasedConversions {
+struct Conversions {
     branch: fn(ErasedBranch) -> Result<ErasedNode, DualError>,
     fields: for<'term> fn(
         *const (),
         PhantomData<&'term ()>,
     ) -> Result<HashMap<ErasedSlot, AnyTerm<'term>>, ErasedLeaf>,
+    fields_of_node:
+        for<'term> fn(ErasedNode) -> Result<Result<HashSet<ErasedSlot>, ErasedLeaf>, DualError>,
     leaf: fn(ErasedLeaf) -> Result<ErasedNode, DualError>,
     slot: fn(ErasedSlot) -> Result<ErasedNode, DualError>,
     slot_type: fn(ErasedSlot) -> Result<TypeId, DualError>,
+}
+
+#[derive(Debug, Eq, PartialEq)]
+enum DualError {
+    Conflict {
+        at: Arc<RootedPath>,
+        existing: AnyNode,
+        incoming: AnyNode,
+    },
+    Incomplete {
+        holes: HashSet<RootedHole>,
+    },
+    InvalidBranch(AnyBranch),
+    InvalidLeaf(AnyLeaf),
+    InvalidNode(AnyNode),
+    InvalidSlot(AnySlot),
+    MissingNode {
+        at: Arc<RootedPath>,
+    },
+    MissingSlot {
+        local: AnySlot,
+    },
+    MistypedLeaf {
+        actual: AnyLeaf,
+        expected: TypeId,
+    },
+    MistypedNode {
+        actual: AnyNode,
+        expected: TypeId,
+    },
+    MistypedSlot {
+        actual: AnySlot,
+        expected: TypeId,
+    },
+    NoSuchHole(RootedHole),
+    UnregisteredType(TypeId),
 }
 
 #[repr(transparent)]
@@ -164,7 +166,7 @@ struct LazyFields<'pinup> {
 struct NoFields;
 
 struct Registry {
-    dispatch: HashMap<TypeId, ErasedConversions>,
+    dispatch: HashMap<TypeId, Conversions>,
 }
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -211,6 +213,7 @@ trait Dual: 'static + Clone {
         + TryFrom<ErasedSlot, Error = ErasedSlot>
         + Into<Self::Branch>;
     fn fields(&self) -> Result<HashMap<Self::Slot, AnyTerm<'_>>, Self::Leaf>;
+    fn fields_of_node(node: Self::Node) -> Result<HashSet<Self::Slot>, Self::Leaf>;
     // TODO: Instead of passing a `HashMap`, just hand this an already-unerased `Self::Node`
     // and have it generate a *local* continuation (via `Slot`s instead of `Path`s).
     // Then, fields of any type -- which are already referenced --
@@ -382,8 +385,6 @@ where
         )
     }
 
-    // TODO:
-    /*
     #[inline]
     #[expect(
         clippy::unwrap_in_result,
@@ -399,24 +400,25 @@ where
             .dispatch
             .get(&hole.ty)
             .ok_or(DualError::UnregisteredType(hole.ty))?;
-        let fields: Result<HashSet<ErasedSlot>, ErasedLeaf> = dispatch.fields_of_node(node)?;
+        let fields: Result<HashSet<ErasedSlot>, ErasedLeaf> = (dispatch.fields_of_node)(node)?;
         if !self.holes.remove(hole) {
-            return Err(DualError::MissingHole(hole.clone()));
+            return Err(DualError::NoSuchHole(hole.clone()));
         }
         let () = match fields {
             Err(leaf) => {
                 let _dup: bool = self.leaves.insert(RootedLeaf {
                     leaf,
-                    path: hole.path,
+                    path: Arc::clone(&hole.path),
                 });
                 // TODO: do we need to check for consistency here?
                 // TODO: should we use a `HashMap<Arc<RootedPath>, ErasedLeaf>` instead?
             }
             Ok(slots) => {
+                #[expect(clippy::iter_over_hash_type, reason = "order doesn't matter")]
                 for slot in slots {
                     let _dup: bool = self.holes.insert(RootedHole {
                         path: Arc::new(RootedPath::Step {
-                            path: hole.path,
+                            path: Arc::clone(&hole.path),
                             slot,
                         }),
                         ty: (dispatch.slot_type)(slot)?,
@@ -428,7 +430,6 @@ where
         };
         Ok(())
     }
-    */
 
     #[inline]
     fn pin_up(
@@ -574,7 +575,7 @@ impl Registry {
         }
         let _: Option<_> = self.dispatch.insert(
             ty,
-            ErasedConversions {
+            Conversions {
                 branch: |erased_branch| {
                     let branch: D::Branch = erased_branch.try_into().map_err(|index| {
                         DualError::InvalidBranch(AnyBranch {
@@ -594,6 +595,20 @@ impl Registry {
                         Ok(fields) => Ok(fields.into_iter().map(|(k, v)| (k.into(), v)).collect()),
                         Err(leaf) => Err(leaf.into()),
                     }
+                },
+                fields_of_node: |erased_node| {
+                    let node: D::Node = erased_node.try_into().map_err(|index| {
+                        DualError::InvalidNode(AnyNode {
+                            index,
+                            ty: TypeId::of::<D>(),
+                        })
+                    })?;
+                    Ok(match D::fields_of_node(node) {
+                        // TODO: the below is taking a newly allocated collection, unpacking it,
+                        // and repacking it, only to hand it to a continuation that will unpack it
+                        Ok(fields) => Ok(fields.into_iter().map(Into::into).collect()),
+                        Err(leaf) => Err(leaf.into()),
+                    })
                 },
                 leaf: |erased_leaf| {
                     let leaf: D::Leaf = erased_leaf.try_into().map_err(|index| {
@@ -783,15 +798,24 @@ macro_rules! check_dual_roundtrip {
                         assert_eq!(other_branch, branch, "slots {first_slot:?} and {slot:?} disagree on their branch");
                     }
                     let node: <$D as Dual>::Node = branch.into();
+                    let keys: HashSet<<$D as Dual>::Slot> = fields.keys().copied().collect();
                     let roundtrip: Result<$D, _> = <$D as Dual>::from_node(node, $crate::CloneFields { fields });
                     let expected = Ok(d);
                     assert_eq!(roundtrip.as_ref(), expected, "{d:?} -> {branch:?} (branch) -> {node:?} (node) -> {roundtrip:?} =/= {expected:?}");
+                    let synthetic = <$D as Dual>::fields_of_node(node);
+                    assert_eq!(
+                        synthetic.as_ref(),
+                        Ok(&keys),
+                        "{d:?} --[Dual::fields]-> Ok({keys:?}) (keys of fields) --> {node:?} (node) --[Dual::fields_of_node]-> {synthetic:?} =/= Ok({keys:?})",
+                    );
                 }
                 Err(leaf) => {
                     let node: <$D as Dual>::Node = leaf.into();
                     let roundtrip: Result<$D, _> = <$D as Dual>::from_node(node, $crate::NoFields);
                     let expected = Ok(d);
                     assert_eq!(roundtrip.as_ref(), expected, "{d:?} -> {leaf:?} (leaf) -> {node:?} (node) -> {roundtrip:?} =/= {expected:?}");
+                    let synthetic = <$D as Dual>::fields_of_node(node);
+                    assert_eq!(synthetic, Err(leaf), "{d:?} --[Dual::fields]-> Err({leaf:?}) (leaf) --> {node:?} (node) --[Dual::fields_of_node]-> {synthetic:?} =/= Err({leaf:?})");
                 }
             }
         }
