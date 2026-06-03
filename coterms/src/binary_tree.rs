@@ -81,7 +81,7 @@ impl Dual for BinaryTree {
     }
 
     #[inline]
-    fn register_all_field_types() {
+    fn register_all_field_types(_registry: &mut Registry) {
         // you *could* put `Self` here (and, in macros, we should for full generality);
         // it'll just do nothing, since `register` short-circuits on already-registered types.
     }

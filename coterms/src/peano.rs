@@ -78,7 +78,7 @@ impl Dual for Peano {
     }
 
     #[inline]
-    fn register_all_field_types() {
+    fn register_all_field_types(_registry: &mut Registry) {
         // you *could* put `Self` here (and, in macros, we should for full generality);
         // it'll just do nothing, since `register` short-circuits on already-registered types.
     }
@@ -207,6 +207,35 @@ mod tests {
     use {super::*, crate::DualError, pbt::pbt};
 
     check_dual_roundtrip!(Peano);
+
+    #[test]
+    fn zero_and_one_conflict_at_root() {
+        let coterm = Frontier::<Peano> {
+            _phantom: PhantomData,
+            holes: HashSet::new(),
+            leaves: [
+                RootedLeaf {
+                    leaf: PeanoLeaf::Zero.into(),
+                    path: Arc::new(RootedPath::Root),
+                },
+                RootedLeaf {
+                    leaf: PeanoLeaf::Zero.into(),
+                    path: Arc::new(RootedPath::Step {
+                        path: Arc::new(RootedPath::Root),
+                        slot: PeanoSlot::Successor0.into(),
+                    }),
+                },
+            ]
+            .into_iter()
+            .collect(),
+        };
+
+        let decoded = coterm.dual();
+        assert!(
+            matches!(decoded, Err(DualError::Conflict(..))),
+            "{decoded:?} =/= Err(DualError::Conflict(..))",
+        );
+    }
 
     fn term_coterm_term_roundtrip(term: &Peano) {
         let coterm = Frontier::complete(term);

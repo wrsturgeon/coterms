@@ -73,7 +73,7 @@ impl Dual for Boolean {
     }
 
     #[inline]
-    fn register_all_field_types() {
+    fn register_all_field_types(_registry: &mut Registry) {
         // you *could* put `Self` here (and, in macros, we should for full generality);
         // it'll just do nothing, since `register` short-circuits on already-registered types.
     }
@@ -148,9 +148,7 @@ impl TryFrom<ErasedBranch> for BooleanBranch {
 
     #[inline]
     fn try_from(value: ErasedBranch) -> Result<Self, Self::Error> {
-        Ok(match value.0 {
-            _ => return Err(value),
-        })
+        Err(value)
     }
 }
 
@@ -185,9 +183,7 @@ impl TryFrom<ErasedSlot> for BooleanSlot {
 
     #[inline]
     fn try_from(value: ErasedSlot) -> Result<Self, Self::Error> {
-        Ok(match value.0 {
-            _ => return Err(value),
-        })
+        Err(value)
     }
 }
 

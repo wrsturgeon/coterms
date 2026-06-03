@@ -14,7 +14,6 @@ extern crate alloc;
 mod binary_tree;
 mod boolean;
 mod incremental;
-mod nth_boolean;
 mod option;
 mod peano;
 
@@ -205,7 +204,7 @@ trait Dual: 'static + Clone {
     fn from_node<F>(node: Self::Node, fields: F) -> Result<Self, DualError>
     where
         F: Fields<Self>;
-    fn register_all_field_types();
+    fn register_all_field_types(registry: &mut Registry);
     // TODO: is the below still necessary?
     /// The type with which this slot should be filled.
     fn slot_type(slot: Self::Slot) -> TypeId;
@@ -342,26 +341,11 @@ where
                 .dispatch
                 .get(&parent_type)
                 .ok_or(DualError::UnregisteredType(parent_type))?;
-            let erased_node = (dispatch.leaf)(leaf.leaf)?;
-            let maybe_existing: Option<_> = pinup.insert(
-                Arc::clone(&leaf.path),
-                AnyNode {
-                    index: erased_node,
-                    ty: parent_type,
-                },
-            );
-            if let Some(existing) = maybe_existing
-                && existing.index != erased_node
-            {
-                return Err(DualError::Conflict(
-                    Arc::clone(&leaf.path),
-                    existing,
-                    AnyNode {
-                        index: erased_node,
-                        ty: parent_type,
-                    },
-                ));
-            }
+            let node = AnyNode {
+                index: (dispatch.leaf)(leaf.leaf)?,
+                ty: parent_type,
+            };
+            let () = Self::pin_node(&mut pinup, Arc::clone(&leaf.path), node)?;
         }
         let root_path = Arc::new(RootedPath::Root);
         let Some(root_any_node) = pinup.get(&root_path) else {
@@ -390,23 +374,46 @@ where
         else {
             return Ok(TypeId::of::<D>());
         };
-        if let Some(existing) = pinup.get(parent_path) {
-            // TODO: consistency check (should produce a PBT failure in the meantime)
-            return Ok(existing.ty);
-        }
-        let parent_type = Self::pin_up(parent_path, pinup, registry)?;
+        let parent_type = if let Some(existing) = pinup.get(parent_path) {
+            existing.ty
+        } else {
+            Self::pin_up(parent_path, pinup, registry)?
+        };
         let dispatch = registry
             .dispatch
             .get(&parent_type)
             .ok_or(DualError::UnregisteredType(parent_type))?;
-        let _toctou: Option<_> = pinup.insert(
+        let () = Self::pin_node(
+            pinup,
             Arc::clone(parent_path),
             AnyNode {
                 index: (dispatch.slot)(slot)?,
                 ty: parent_type,
             },
-        );
+        )?;
         (dispatch.slot_type)(slot)
+    }
+
+    #[inline]
+    fn pin_node(
+        pinup: &mut HashMap<Arc<RootedPath>, AnyNode>,
+        path: Arc<RootedPath>,
+        node: AnyNode,
+    ) -> Result<(), DualError> {
+        match pinup.entry(Arc::clone(&path)) {
+            hash_map::Entry::Vacant(vacant) => {
+                let _: &mut AnyNode = vacant.insert(node);
+                Ok(())
+            }
+            hash_map::Entry::Occupied(occupied) => {
+                let existing = occupied.get();
+                if *existing == node {
+                    Ok(())
+                } else {
+                    Err(DualError::Conflict(path, existing.clone(), node))
+                }
+            }
+        }
     }
 }
 
@@ -489,6 +496,9 @@ impl Registry {
         D: Dual,
     {
         let ty = TypeId::of::<D>();
+        if self.dispatch.contains_key(&ty) {
+            return;
+        }
         let _: Option<_> = self.dispatch.insert(
             ty,
             ErasedConversions {
@@ -544,6 +554,7 @@ impl Registry {
                 },
             },
         );
+        let () = D::register_all_field_types(self);
     }
 
     #[inline]
@@ -598,26 +609,11 @@ fn register<D>()
 where
     D: Dual,
 {
-    // TODO: Is it worth holding an `&mut` handle while recursing?
-    // This function is only called ~once, so it's truly not a performance concern.
-    #[expect(
-        clippy::unwrap_used,
-        reason = "a poisoned lock means another panic already occurred"
-    )]
-    if REGISTRY
-        .read()
-        .unwrap()
-        .dispatch
-        .contains_key(&TypeId::of::<D>())
-    {
-        return;
-    }
     #[expect(
         clippy::unwrap_used,
         reason = "a poisoned lock means another panic already occurred"
     )]
     let () = REGISTRY.write().unwrap().register::<D>();
-    let () = D::register_all_field_types();
 }
 
 #[inline]
@@ -751,7 +747,7 @@ macro_rules! check_dual_roundtrip {
             );
         }
 
-        #[::pbt::pbt(100_000)]
+        #[::pbt::pbt]
         fn unique_valid_frontier_per_term(leaves: &HashSet<RootedLeaf>) {
             let coterm = Frontier::<$D> {
                 _phantom: core::marker::PhantomData,

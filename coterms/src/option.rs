@@ -2,7 +2,7 @@ use {
     crate::{
         AnyNode, AnyTerm, Dual, DualError, ErasedBranch, ErasedLeaf, ErasedNode, ErasedSlot,
         Fields, Frontier, Registry, RootedLeaf, RootedPath, any_leaf, any_slot,
-        binary_tree::BinaryTree, register, typed_node,
+        binary_tree::BinaryTree, typed_node,
     },
     ahash::{HashMap, HashSet, HashSetExt as _},
     alloc::sync::Arc,
@@ -69,8 +69,8 @@ where
     }
 
     #[inline]
-    fn register_all_field_types() {
-        let () = register::<T>();
+    fn register_all_field_types(registry: &mut Registry) {
+        let () = registry.register::<T>();
     }
 
     #[inline]
