@@ -2,7 +2,7 @@ use {
     crate::{
         AnyLeaf, AnyNode, AnySlot, AnyTerm, Dual, DualError, ErasedBranch, ErasedLeaf, ErasedNode,
         ErasedSlot, Frontier, Registry, RootedHole, RootedLeaf, RootedPath, any_leaf, any_slot,
-        check_dual_roundtrip, typed_node,
+        check_dual, typed_node,
     },
     ahash::{HashMap, HashSet, HashSetExt as _},
     alloc::sync::Arc,
@@ -305,23 +305,17 @@ fn one_more_branch_on_the_left() -> Frontier<BinaryTree> {
 
 #[cfg(test)]
 mod tests {
-    use {super::*, crate::DualError, pbt::pbt};
+    use {
+        super::*,
+        crate::{DualError, register},
+        pbt::pbt,
+    };
 
-    check_dual_roundtrip!(BinaryTree);
+    check_dual!(BinaryTree);
 
     #[test]
     fn dual_leaf() {
+        let () = register::<BinaryTree>();
         assert_eq!(Frontier::complete(&BinaryTree::Leaf), just_a_leaf());
-    }
-
-    #[pbt]
-    fn term_coterm_term_roundtrip(term: &BinaryTree) {
-        let coterm = Frontier::complete(term);
-        let roundtrip: Result<BinaryTree, DualError> = coterm.dual();
-        let expected = Ok(term.clone());
-        assert_eq!(
-            roundtrip, expected,
-            "{term:?} -> {coterm:?} -> {roundtrip:?} =/= {expected:?}",
-        );
     }
 }

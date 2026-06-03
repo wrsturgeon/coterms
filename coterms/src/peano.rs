@@ -2,7 +2,7 @@ use {
     crate::{
         AnyLeaf, AnyNode, AnySlot, AnyTerm, Dual, DualError, ErasedBranch, ErasedLeaf, ErasedNode,
         ErasedSlot, Frontier, Registry, RootedHole, RootedLeaf, RootedPath, any_leaf, any_slot,
-        check_dual_roundtrip, typed_node,
+        check_dual, typed_node,
     },
     ahash::{HashMap, HashSet, HashSetExt as _},
     alloc::sync::Arc,
@@ -214,10 +214,11 @@ impl TryFrom<ErasedSlot> for PeanoSlot {
 mod tests {
     use {super::*, crate::DualError, pbt::pbt};
 
-    check_dual_roundtrip!(Peano);
+    check_dual!(Peano);
 
     #[test]
     fn zero_and_one_conflict_at_root() {
+        let () = crate::register::<Peano>();
         let coterm = Frontier::<Peano> {
             _phantom: PhantomData,
             holes: HashSet::new(),
@@ -242,16 +243,6 @@ mod tests {
         assert!(
             matches!(decoded, Err(DualError::Conflict { .. })),
             "{decoded:?} =/= Err(DualError::Conflict {{ .. }})",
-        );
-    }
-
-    fn term_coterm_term_roundtrip(term: &Peano) {
-        let coterm = Frontier::complete(term);
-        let roundtrip: Result<Peano, DualError> = coterm.dual();
-        let expected = Ok(term.clone());
-        assert_eq!(
-            roundtrip, expected,
-            "{term:?} -> {coterm:?} -> {roundtrip:?} =/= {expected:?}",
         );
     }
 }

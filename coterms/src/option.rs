@@ -204,20 +204,9 @@ impl TryFrom<ErasedSlot> for OptionSlot {
 mod tests {
     use {
         super::*,
-        crate::{DualError, check_dual_roundtrip},
+        crate::{DualError, check_dual},
         pbt::pbt,
     };
 
-    check_dual_roundtrip!(Option<BinaryTree>);
-
-    #[pbt]
-    fn term_coterm_term_roundtrip(term: &Option<BinaryTree>) {
-        let coterm = Frontier::complete(term);
-        let roundtrip: Result<Option<BinaryTree>, DualError> = coterm.dual();
-        let expected = Ok(term.clone());
-        assert_eq!(
-            roundtrip, expected,
-            "{term:?} -> {coterm:?} -> {roundtrip:?} =/= {expected:?}",
-        );
-    }
+    check_dual!(Option<BinaryTree>);
 }

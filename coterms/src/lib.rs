@@ -24,6 +24,7 @@ use {
         any::{Any, TypeId},
         fmt,
         hash::Hash,
+        iter,
         marker::PhantomData,
         ptr,
     },
@@ -90,7 +91,7 @@ struct Conversions {
     fields_of_node:
         for<'term> fn(ErasedNode) -> Result<Result<HashSet<ErasedSlot>, ErasedLeaf>, DualError>,
     leaf: fn(ErasedLeaf) -> Result<ErasedNode, DualError>,
-    slot: fn(ErasedSlot) -> Result<ErasedNode, DualError>,
+    slot: fn(ErasedSlot) -> Result<ErasedBranch, DualError>,
     slot_type: fn(ErasedSlot) -> Result<TypeId, DualError>,
 }
 
@@ -286,13 +287,12 @@ where
 {
     #[inline]
     pub fn complete(d: &D) -> Self {
-        let mut leaves = HashSet::new();
-        let () = register::<D>();
         #[expect(
             clippy::unwrap_used,
             reason = "a poisoned lock means another panic already occurred"
         )]
         let registry = REGISTRY.read().unwrap();
+        let mut leaves = HashSet::new();
         #[expect(
             clippy::expect_used,
             reason = "all possible failures here are internal and ought to fail loudly"
@@ -345,7 +345,6 @@ where
         reason = "a poisoned lock means another panic already occurred"
     )]
     pub fn dual(&self) -> Result<D, DualError> {
-        let () = register::<D>();
         #[expect(
             clippy::unwrap_used,
             reason = "a poisoned lock means another panic already occurred"
@@ -390,7 +389,11 @@ where
         clippy::unwrap_in_result,
         reason = "a poisoned lock means another panic already occurred"
     )]
-    fn fill(&mut self, hole: &RootedHole, node: ErasedNode) -> Result<(), DualError> {
+    fn fill(
+        &mut self,
+        hole: &RootedHole,
+        node: ErasedNode,
+    ) -> Result<HashSet<ErasedSlot>, DualError> {
         #[expect(
             clippy::unwrap_used,
             reason = "a poisoned lock means another panic already occurred"
@@ -404,7 +407,7 @@ where
         if !self.holes.remove(hole) {
             return Err(DualError::NoSuchHole(hole.clone()));
         }
-        let () = match fields {
+        match fields {
             Err(leaf) => {
                 let _dup: bool = self.leaves.insert(RootedLeaf {
                     leaf,
@@ -412,10 +415,11 @@ where
                 });
                 // TODO: do we need to check for consistency here?
                 // TODO: should we use a `HashMap<Arc<RootedPath>, ErasedLeaf>` instead?
+                Ok(HashSet::new())
             }
             Ok(slots) => {
                 #[expect(clippy::iter_over_hash_type, reason = "order doesn't matter")]
-                for slot in slots {
+                for &slot in &slots {
                     let _dup: bool = self.holes.insert(RootedHole {
                         path: Arc::new(RootedPath::Step {
                             path: Arc::clone(&hole.path),
@@ -426,9 +430,22 @@ where
                     // TODO: do we need to check for consistency here?
                     // TODO: should we use a `HashMap<Arc<RootedPath>, TypeId>` instead?
                 }
+                Ok(slots)
             }
-        };
-        Ok(())
+        }
+    }
+
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            holes: iter::once(RootedHole {
+                path: Arc::new(RootedPath::Root),
+                ty: TypeId::of::<D>(),
+            })
+            .collect(),
+            leaves: HashSet::new(),
+            _phantom: PhantomData,
+        }
     }
 
     #[inline]
@@ -457,7 +474,7 @@ where
             pinup,
             Arc::clone(parent_path),
             AnyNode {
-                index: (dispatch.slot)(slot)?,
+                index: (dispatch.branch)((dispatch.slot)(slot)?)?,
                 ty: parent_type,
             },
         )?;
@@ -628,8 +645,7 @@ impl Registry {
                         })
                     })?;
                     let branch: D::Branch = slot.into();
-                    let node: D::Node = branch.into();
-                    Ok(node.into())
+                    Ok(branch.into())
                 },
                 slot_type: |erased_slot| {
                     let slot: D::Slot = erased_slot.try_into().map_err(|index| {
@@ -647,13 +663,12 @@ impl Registry {
 
     #[inline]
     fn slot(&self, &AnySlot { index, ty }: &AnySlot) -> Result<AnyNode, DualError> {
-        let f = self
+        let dispatch = self
             .dispatch
             .get(&ty)
-            .ok_or(DualError::UnregisteredType(ty))?
-            .slot;
+            .ok_or(DualError::UnregisteredType(ty))?;
         Ok(AnyNode {
-            index: f(index)?,
+            index: (dispatch.branch)((dispatch.slot)(index)?)?,
             ty,
         })
     }
@@ -757,7 +772,7 @@ where
 
 /// Check round-trip consistency for some type `D: Dual`
 /// between `D::Node <-> ErasedNode` and `D::Slot <-> ErasedSlot`.
-macro_rules! check_dual_roundtrip {
+macro_rules! check_dual {
     ($D:ty) => {
         #[::pbt::pbt]
         fn branch_node_usize_commutes(&branch: &<$D as Dual>::Branch) {
@@ -773,15 +788,14 @@ macro_rules! check_dual_roundtrip {
         }
 
         #[::pbt::pbt]
-        fn leaf_node_usize_commutes(&leaf: &<$D as Dual>::Leaf) {
-            #[expect(clippy::as_conversions, reason = "[don draper voice] that's what the tests are for!")]
-            let leaf_usize = leaf as usize;
-            let node: <$D as Dual>::Node = leaf.into();
-            #[expect(clippy::as_conversions, reason = "[don draper voice] that's what the tests are for!")]
-            let node_usize = node as usize;
+        fn term_coterm_term_roundtrip(term: &$D) {
+            let () = $crate::register::<$D>();
+            let coterm = Frontier::complete(term);
+            let roundtrip: Result<$D, DualError> = coterm.dual();
+            let expected = Ok(term.clone());
             assert_eq!(
-                leaf_usize, node_usize,
-                "\r\n{leaf:?} --> {leaf_usize} (leaf)\r\n|        !\r\nV        V\r\n{node:?} --> {node_usize} (node)",
+                roundtrip, expected,
+                "{term:?} -> {coterm:?} -> {roundtrip:?} =/= {expected:?}",
             );
         }
 
@@ -789,7 +803,7 @@ macro_rules! check_dual_roundtrip {
         fn eta_expansion_roundtrip(d: &$D) {
             match d.fields() {
                 Ok(fields) => {
-                    let (&first_slot, _) = fields.iter().next().expect("no fields on an alleged non-leaf");
+                    let first_slot = *fields.keys().next().expect("no fields on an alleged non-leaf");
                     let branch: <$D as Dual>::Branch = first_slot.into();
                     for (&slot, any_term) in &fields {
                         let slot_ty = <$D as Dual>::slot_type(slot);
@@ -818,6 +832,19 @@ macro_rules! check_dual_roundtrip {
                     assert_eq!(synthetic, Err(leaf), "{d:?} --[Dual::fields]-> Err({leaf:?}) (leaf) --> {node:?} (node) --[Dual::fields_of_node]-> {synthetic:?} =/= Err({leaf:?})");
                 }
             }
+        }
+
+        #[::pbt::pbt]
+        fn leaf_node_usize_commutes(&leaf: &<$D as Dual>::Leaf) {
+            #[expect(clippy::as_conversions, reason = "[don draper voice] that's what the tests are for!")]
+            let leaf_usize = leaf as usize;
+            let node: <$D as Dual>::Node = leaf.into();
+            #[expect(clippy::as_conversions, reason = "[don draper voice] that's what the tests are for!")]
+            let node_usize = node as usize;
+            assert_eq!(
+                leaf_usize, node_usize,
+                "\r\n{leaf:?} --> {leaf_usize} (leaf)\r\n|        !\r\nV        V\r\n{node:?} --> {node_usize} (node)",
+            );
         }
 
         #[::pbt::pbt]
@@ -902,7 +929,62 @@ macro_rules! check_dual_roundtrip {
                 "{usize:?} -> {tmp:?} -> {roundtrip:?} =/= {usize:?}",
             );
         }
+
+        #[::pbt::pbt]
+        fn term_hole_filling_roundtrip(d: &$D, seed: &u64) {
+            let () = $crate::register::<$D>();
+            let mut prng = pbt::WyRand::new(*seed);
+            let mut frontier = Frontier::<$D>::new();
+
+            let mut work = vec![(
+                $crate::RootedHole {
+                    path: Arc::new(RootedPath::Root),
+                    ty: TypeId::of::<$D>(),
+                },
+                AnyTerm::new(d),
+            )];
+            while let Some(n) = core::num::NonZero::new(work.len()) {
+                #[expect(
+                    clippy::as_conversions,
+                    clippy::cast_possible_truncation,
+                    reason = "bounded by hardware"
+                )]
+                let i: usize = prng.rand() as usize % n;
+                let (hole, any_term) = work.swap_remove(i);
+                let (node, holes) = {
+                    let registry = $crate::REGISTRY.read().unwrap();
+                    let dispatch = registry.dispatch.get(&hole.ty).unwrap_or_else(|| panic!("unregistered type: {:?}", hole.ty));
+                    match (dispatch.fields)(any_term.ptr, any_term.lifetime) {
+                        Err(leaf) => {
+                            let node: ErasedNode = (dispatch.leaf)(leaf).unwrap();
+                            (node, vec![])
+                        }
+                        Ok(fields) => {
+                            let first_slot: ErasedSlot = *fields.keys().next().expect("no fields on an alleged non-leaf");
+                            let branch: ErasedBranch = (dispatch.slot)(first_slot).unwrap();
+                            let node: ErasedNode = (dispatch.branch)(branch).unwrap();
+                            let holes: Vec<($crate::RootedHole, AnyTerm)> = fields.into_iter().map(|(slot, fill)| (
+                                $crate::RootedHole {
+                                    path: Arc::new(RootedPath::Step {
+                                        path: Arc::clone(&hole.path),
+                                        slot,
+                                    }),
+                                    ty: (dispatch.slot_type)(slot).unwrap(),
+                                },
+                                fill,
+                            )).collect();
+                            (node, holes)
+                        }
+                    }
+                };
+                let _: HashSet<ErasedSlot> = frontier.fill(&hole, node).unwrap();
+                let () = work.extend(holes);
+            }
+
+            let roundtrip = frontier.dual();
+            assert_eq!(roundtrip.as_ref(), Ok(d), "{d:?} -> ...hole-filling... -> {roundtrip:?} =/= Ok({d:?})");
+        }
     };
 }
 
-use check_dual_roundtrip;
+use check_dual;
