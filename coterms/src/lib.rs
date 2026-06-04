@@ -103,7 +103,7 @@ enum DualError {
         incoming: AnyNode,
     },
     Incomplete {
-        holes: HashSet<RootedHole>,
+        holes: HashMap<Arc<RootedPath>, TypeId>,
     },
     InvalidBranch(AnyBranch),
     InvalidLeaf(AnyLeaf),
@@ -127,7 +127,7 @@ enum DualError {
         actual: AnySlot,
         expected: TypeId,
     },
-    NoSuchHole(RootedHole),
+    NoSuchHole(Arc<RootedPath>),
     UnregisteredType(TypeId),
 }
 
@@ -152,8 +152,8 @@ struct Frontier<D>
 where
     D: Dual,
 {
-    holes: HashSet<RootedHole>,
-    leaves: HashSet<RootedLeaf>,
+    holes: HashMap<Arc<RootedPath>, TypeId>,
+    leaves: HashMap<Arc<RootedPath>, ErasedLeaf>,
     _phantom: PhantomData<D>,
 }
 
@@ -215,15 +215,10 @@ trait Dual: 'static + Clone {
         + Into<Self::Branch>;
     fn fields(&self) -> Result<HashMap<Self::Slot, AnyTerm<'_>>, Self::Leaf>;
     fn fields_of_node(node: Self::Node) -> Result<HashSet<Self::Slot>, Self::Leaf>;
-    // TODO: Instead of passing a `HashMap`, just hand this an already-unerased `Self::Node`
-    // and have it generate a *local* continuation (via `Slot`s instead of `Path`s).
-    // Then, fields of any type -- which are already referenced --
-    // can be erased as `(*const _, TypeId)` and dispatched behind the scenes.
     fn from_node<F>(node: Self::Node, fields: F) -> Result<Self, DualError>
     where
         F: Fields<Self>;
     fn register_all_field_types(registry: &mut Registry);
-    // TODO: is the below still necessary?
     /// The type with which this slot should be filled.
     fn slot_type(slot: Self::Slot) -> TypeId;
 }
@@ -292,7 +287,7 @@ where
             reason = "a poisoned lock means another panic already occurred"
         )]
         let registry = REGISTRY.read().unwrap();
-        let mut leaves = HashSet::new();
+        let mut leaves = HashMap::new();
         #[expect(
             clippy::expect_used,
             reason = "all possible failures here are internal and ought to fail loudly"
@@ -306,7 +301,7 @@ where
         .expect("INTERNAL ERROR (`coterms`)");
         Self {
             _phantom: PhantomData,
-            holes: HashSet::new(),
+            holes: HashMap::new(),
             leaves,
         }
     }
@@ -315,12 +310,13 @@ where
     fn complete_leaves(
         term: &AnyTerm<'_>,
         path: Arc<RootedPath>,
-        leaves: &mut HashSet<RootedLeaf>,
+        leaves: &mut HashMap<Arc<RootedPath>, ErasedLeaf>,
         registry: &Registry,
     ) -> Result<(), DualError> {
         let () = match registry.fields(term)? {
             Err(leaf) => {
-                let _: bool = leaves.insert(RootedLeaf { leaf, path });
+                let _: Option<_> = leaves.insert(path, leaf);
+                // TODO: do we need to check for consistency here?
             }
             Ok(fields) =>
             {
@@ -337,8 +333,6 @@ where
         Ok(())
     }
 
-    // TODO: use `AsRef` or `Borrow` to allow skipping `ty: TypeId` fields
-    // so we can run PBT on frontiers without having to generate `TypeId`s
     #[inline]
     #[expect(
         clippy::unwrap_in_result,
@@ -358,17 +352,17 @@ where
         // TODO: This `HashMap` shouldn't be necessary at all if we hash-cons internal structure!
         let mut pinup: HashMap<Arc<RootedPath>, AnyNode> = HashMap::new();
         #[expect(clippy::iter_over_hash_type, reason = "order doesn't matter")]
-        for leaf in &self.leaves {
-            let parent_type = Self::pin_up(&leaf.path, &mut pinup, &registry)?;
+        for (path, &leaf) in &self.leaves {
+            let parent_type = Self::pin_up(path, &mut pinup, &registry)?;
             let dispatch = registry
                 .dispatch
                 .get(&parent_type)
                 .ok_or(DualError::UnregisteredType(parent_type))?;
             let node = AnyNode {
-                index: (dispatch.leaf)(leaf.leaf)?,
+                index: (dispatch.leaf)(leaf)?,
                 ty: parent_type,
             };
-            let () = Self::pin_node(&mut pinup, Arc::clone(&leaf.path), node)?;
+            let () = Self::pin_node(&mut pinup, Arc::clone(path), node)?;
         }
         let root_path = Arc::new(RootedPath::Root);
         let Some(root_any_node) = pinup.get(&root_path) else {
@@ -391,9 +385,12 @@ where
     )]
     fn fill(
         &mut self,
-        hole: &RootedHole,
+        hole: &Arc<RootedPath>,
         node: ErasedNode,
     ) -> Result<HashSet<ErasedSlot>, DualError> {
+        let Some(hole_ty) = self.holes.remove(hole) else {
+            return Err(DualError::NoSuchHole(Arc::clone(hole)));
+        };
         #[expect(
             clippy::unwrap_used,
             reason = "a poisoned lock means another panic already occurred"
@@ -401,18 +398,12 @@ where
         let registry = REGISTRY.read().unwrap();
         let dispatch = registry
             .dispatch
-            .get(&hole.ty)
-            .ok_or(DualError::UnregisteredType(hole.ty))?;
+            .get(&hole_ty)
+            .ok_or(DualError::UnregisteredType(hole_ty))?;
         let fields: Result<HashSet<ErasedSlot>, ErasedLeaf> = (dispatch.fields_of_node)(node)?;
-        if !self.holes.remove(hole) {
-            return Err(DualError::NoSuchHole(hole.clone()));
-        }
         match fields {
             Err(leaf) => {
-                let _dup: bool = self.leaves.insert(RootedLeaf {
-                    leaf,
-                    path: Arc::clone(&hole.path),
-                });
+                let _dup: Option<ErasedLeaf> = self.leaves.insert(Arc::clone(hole), leaf);
                 // TODO: do we need to check for consistency here?
                 // TODO: should we use a `HashMap<Arc<RootedPath>, ErasedLeaf>` instead?
                 Ok(HashSet::new())
@@ -420,13 +411,13 @@ where
             Ok(slots) => {
                 #[expect(clippy::iter_over_hash_type, reason = "order doesn't matter")]
                 for &slot in &slots {
-                    let _dup: bool = self.holes.insert(RootedHole {
-                        path: Arc::new(RootedPath::Step {
-                            path: Arc::clone(&hole.path),
+                    let _dup: Option<TypeId> = self.holes.insert(
+                        Arc::new(RootedPath::Step {
+                            path: Arc::clone(hole),
                             slot,
                         }),
-                        ty: (dispatch.slot_type)(slot)?,
-                    });
+                        (dispatch.slot_type)(slot)?,
+                    );
                     // TODO: do we need to check for consistency here?
                     // TODO: should we use a `HashMap<Arc<RootedPath>, TypeId>` instead?
                 }
@@ -438,12 +429,8 @@ where
     #[inline]
     pub fn new() -> Self {
         Self {
-            holes: iter::once(RootedHole {
-                path: Arc::new(RootedPath::Root),
-                ty: TypeId::of::<D>(),
-            })
-            .collect(),
-            leaves: HashSet::new(),
+            holes: iter::once((Arc::new(RootedPath::Root), TypeId::of::<D>())).collect(),
+            leaves: HashMap::new(),
             _phantom: PhantomData,
         }
     }
@@ -881,10 +868,10 @@ macro_rules! check_dual {
         }
 
         #[::pbt::pbt]
-        fn unique_valid_frontier_per_term(leaves: &HashSet<RootedLeaf>) {
+        fn unique_valid_frontier_per_term(leaves: &HashMap<Arc<RootedPath>, ErasedLeaf>) {
             let coterm = Frontier::<$D> {
                 _phantom: core::marker::PhantomData,
-                holes: HashSet::new(),
+                holes: <ahash::HashMap<_, _> as ahash::HashMapExt>::new(),
                 leaves: leaves.clone(),
             };
             let Ok(term) = coterm.dual() else {
@@ -977,7 +964,7 @@ macro_rules! check_dual {
                         }
                     }
                 };
-                let _: HashSet<ErasedSlot> = frontier.fill(&hole, node).unwrap();
+                let _: HashSet<ErasedSlot> = frontier.fill(&hole.path, node).unwrap();
                 let () = work.extend(holes);
             }
 

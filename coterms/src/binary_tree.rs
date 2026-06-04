@@ -219,12 +219,9 @@ impl TryFrom<ErasedSlot> for BinaryTreeSlot {
 fn hole_at_root() -> Frontier<BinaryTree> {
     Frontier {
         _phantom: PhantomData,
-        holes: [RootedHole {
-            path: Arc::new(RootedPath::Root),
-            ty: TypeId::of::<BinaryTree>(),
-        }]
-        .into_iter()
-        .collect(),
+        holes: [(Arc::new(RootedPath::Root), TypeId::of::<BinaryTree>())]
+            .into_iter()
+            .collect(),
         leaves: [].into_iter().collect(),
     }
 }
@@ -233,12 +230,9 @@ fn just_a_leaf() -> Frontier<BinaryTree> {
     Frontier {
         _phantom: PhantomData,
         holes: [].into_iter().collect(),
-        leaves: [RootedLeaf {
-            leaf: BinaryTreeLeaf::Leaf.into(),
-            path: Arc::new(RootedPath::Root),
-        }]
-        .into_iter()
-        .collect(),
+        leaves: [(Arc::new(RootedPath::Root), BinaryTreeLeaf::Leaf.into())]
+            .into_iter()
+            .collect(),
     }
 }
 
@@ -247,20 +241,20 @@ fn just_a_branch() -> Frontier<BinaryTree> {
         _phantom: PhantomData,
         holes: [].into_iter().collect(),
         leaves: [
-            RootedLeaf {
-                leaf: BinaryTreeLeaf::Leaf.into(),
-                path: Arc::new(RootedPath::Step {
+            (
+                Arc::new(RootedPath::Step {
                     path: Arc::new(RootedPath::Root),
                     slot: BinaryTreeSlot::BranchLhs.into(),
                 }),
-            },
-            RootedLeaf {
-                leaf: BinaryTreeLeaf::Leaf.into(),
-                path: Arc::new(RootedPath::Step {
+                BinaryTreeLeaf::Leaf.into(),
+            ),
+            (
+                Arc::new(RootedPath::Step {
                     path: Arc::new(RootedPath::Root),
                     slot: BinaryTreeSlot::BranchRhs.into(),
                 }),
-            },
+                BinaryTreeLeaf::Leaf.into(),
+            ),
         ]
         .into_iter()
         .collect(),
@@ -276,27 +270,27 @@ fn one_more_branch_on_the_left() -> Frontier<BinaryTree> {
         _phantom: PhantomData,
         holes: [].into_iter().collect(),
         leaves: [
-            RootedLeaf {
-                leaf: BinaryTreeLeaf::Leaf.into(),
-                path: Arc::new(RootedPath::Step {
+            (
+                Arc::new(RootedPath::Step {
                     path: Arc::clone(&left_branch),
                     slot: BinaryTreeSlot::BranchLhs.into(),
                 }),
-            },
-            RootedLeaf {
-                leaf: BinaryTreeLeaf::Leaf.into(),
-                path: Arc::new(RootedPath::Step {
+                BinaryTreeLeaf::Leaf.into(),
+            ),
+            (
+                Arc::new(RootedPath::Step {
                     path: left_branch,
                     slot: BinaryTreeSlot::BranchRhs.into(),
                 }),
-            },
-            RootedLeaf {
-                leaf: BinaryTreeLeaf::Leaf.into(),
-                path: Arc::new(RootedPath::Step {
+                BinaryTreeLeaf::Leaf.into(),
+            ),
+            (
+                Arc::new(RootedPath::Step {
                     path: Arc::new(RootedPath::Root),
                     slot: BinaryTreeSlot::BranchRhs.into(),
                 }),
-            },
+                BinaryTreeLeaf::Leaf.into(),
+            ),
         ]
         .into_iter()
         .collect(),

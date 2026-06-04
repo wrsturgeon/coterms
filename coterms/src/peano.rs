@@ -212,7 +212,7 @@ impl TryFrom<ErasedSlot> for PeanoSlot {
 
 #[cfg(test)]
 mod tests {
-    use {super::*, crate::DualError, pbt::pbt};
+    use {super::*, crate::DualError, ahash::HashMapExt as _, pbt::pbt};
 
     check_dual!(Peano);
 
@@ -221,19 +221,16 @@ mod tests {
         let () = crate::register::<Peano>();
         let coterm = Frontier::<Peano> {
             _phantom: PhantomData,
-            holes: HashSet::new(),
+            holes: HashMap::new(),
             leaves: [
-                RootedLeaf {
-                    leaf: PeanoLeaf::Zero.into(),
-                    path: Arc::new(RootedPath::Root),
-                },
-                RootedLeaf {
-                    leaf: PeanoLeaf::Zero.into(),
-                    path: Arc::new(RootedPath::Step {
+                (Arc::new(RootedPath::Root), PeanoLeaf::Zero.into()),
+                (
+                    Arc::new(RootedPath::Step {
                         path: Arc::new(RootedPath::Root),
                         slot: PeanoSlot::Successor0.into(),
                     }),
-                },
+                    PeanoLeaf::Zero.into(),
+                ),
             ]
             .into_iter()
             .collect(),
