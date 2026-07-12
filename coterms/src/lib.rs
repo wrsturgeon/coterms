@@ -119,7 +119,7 @@ pub trait Dual: 'static + Clone {
 /// A type-erased branch tagged with the [`TypeId`] of its parent term.
 #[expect(
     clippy::exhaustive_structs,
-    reason = "these type-erased tagged values are intentionally minimal and stable"
+    reason = "intentionally minimal and stable"
 )]
 #[derive(Clone, Copy, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct AnyBranch {
@@ -132,7 +132,7 @@ pub struct AnyBranch {
 /// A type-erased leaf tagged with the [`TypeId`] of its term.
 #[expect(
     clippy::exhaustive_structs,
-    reason = "these type-erased tagged values are intentionally minimal and stable"
+    reason = "intentionally minimal and stable"
 )]
 #[derive(Clone, Copy, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct AnyLeaf {
@@ -145,7 +145,7 @@ pub struct AnyLeaf {
 /// A type-erased node tagged with the [`TypeId`] of its term.
 #[expect(
     clippy::exhaustive_structs,
-    reason = "these type-erased tagged values are intentionally minimal and stable"
+    reason = "intentionally minimal and stable"
 )]
 #[derive(Clone, Copy, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct AnyNode {
@@ -158,7 +158,7 @@ pub struct AnyNode {
 /// A type-erased field tagged with the [`TypeId`] of its parent term.
 #[expect(
     clippy::exhaustive_structs,
-    reason = "these type-erased tagged values are intentionally minimal and stable"
+    reason = "intentionally minimal and stable"
 )]
 #[derive(Clone, Copy, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct AnyField {
@@ -359,7 +359,10 @@ pub struct RootedHole {
 
 /// A type-erased path from some node
 /// all the way up to the global root.
-#[non_exhaustive]
+#[expect(
+    clippy::exhaustive_enums,
+    reason = "intentionally minimal and stable"
+)]
 #[derive(Clone, Eq, Hash, PartialEq, Pbt)]
 pub enum RootedPath {
     /// The root term itself.
