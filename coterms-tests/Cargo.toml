@@ -1,0 +1,15 @@
+[package]
+name = "coterms-tests"
+authors.workspace = true
+description = "External integration tests for coterms."
+edition.workspace = true
+license.workspace = true
+publish = false
+repository.workspace = true
+version.workspace = true
+
+[dependencies]
+coterms = { path = "../coterms" }
+
+[lints]
+workspace = true

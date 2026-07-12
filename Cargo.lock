@@ -53,6 +53,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "coterms-tests"
+version = "0.1.0"
+dependencies = [
+ "coterms",
+]
+
+[[package]]
 name = "diff"
 version = "0.1.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"

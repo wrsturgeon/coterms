@@ -117,7 +117,10 @@ pub trait Dual: 'static + Clone {
 }
 
 /// A type-erased branch tagged with the [`TypeId`] of its parent term.
-#[non_exhaustive]
+#[expect(
+    clippy::exhaustive_structs,
+    reason = "these type-erased tagged values are intentionally minimal and stable"
+)]
 #[derive(Clone, Copy, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct AnyBranch {
     /// The type-erased branch discriminant.
@@ -127,7 +130,10 @@ pub struct AnyBranch {
 }
 
 /// A type-erased leaf tagged with the [`TypeId`] of its term.
-#[non_exhaustive]
+#[expect(
+    clippy::exhaustive_structs,
+    reason = "these type-erased tagged values are intentionally minimal and stable"
+)]
 #[derive(Clone, Copy, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct AnyLeaf {
     /// The type-erased leaf discriminant.
@@ -137,7 +143,10 @@ pub struct AnyLeaf {
 }
 
 /// A type-erased node tagged with the [`TypeId`] of its term.
-#[non_exhaustive]
+#[expect(
+    clippy::exhaustive_structs,
+    reason = "these type-erased tagged values are intentionally minimal and stable"
+)]
 #[derive(Clone, Copy, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct AnyNode {
     /// The type-erased node discriminant.
@@ -147,7 +156,10 @@ pub struct AnyNode {
 }
 
 /// A type-erased field tagged with the [`TypeId`] of its parent term.
-#[non_exhaustive]
+#[expect(
+    clippy::exhaustive_structs,
+    reason = "these type-erased tagged values are intentionally minimal and stable"
+)]
 #[derive(Clone, Copy, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct AnyField {
     /// The type-erased field discriminant.

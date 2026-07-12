@@ -1,5 +1,5 @@
 [workspace]
-members = ["coterms", "coterms-macro2"]
+members = ["coterms", "coterms-macro2", "coterms-tests"]
 metadata.crane.name = "coterms"
 resolver = "3"
 
