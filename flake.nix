@@ -73,6 +73,7 @@
             inputsFrom = builtins.attrValues self.packages.${system};
             packages = with pkgs; [
               cargo-expand
+              cargo-mutants
               cargo-outdated
               valgrind
             ];

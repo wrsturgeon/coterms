@@ -14,7 +14,7 @@ use {
     pbt::Pbt,
 };
 
-/// ADT: 1 + 1
+/// ADT: 1 + Self
 #[derive(Clone, Debug, Eq, Hash, PartialEq, Pbt)]
 pub enum Peano {
     Zero,
@@ -43,7 +43,16 @@ pub enum PeanoNode {
 #[repr(usize)]
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Pbt)]
 pub enum PeanoSlot {
-    Successor0 = 1,
+    Successor0 = 0,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Pbt)]
+pub enum PeanoZeroSlot {}
+
+#[repr(usize)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Pbt)]
+pub enum PeanoSuccessorSlot {
+    Successor0 = 0,
 }
 
 impl Dual for Peano {
@@ -53,7 +62,7 @@ impl Dual for Peano {
     type Slot = PeanoSlot;
 
     #[inline]
-    fn fields(&self) -> Result<HashMap<Self::Slot, AnyTerm<'_>>, <Self as Dual>::Leaf> {
+    fn fields(&self) -> Result<HashMap<Self::Slot, AnyTerm>, <Self as Dual>::Leaf> {
         match *self {
             Self::Zero => Err(PeanoLeaf::Zero),
             Self::Successor(ref predecessor) => Ok(iter::once((
@@ -204,7 +213,7 @@ impl TryFrom<ErasedSlot> for PeanoSlot {
     #[inline]
     fn try_from(value: ErasedSlot) -> Result<Self, Self::Error> {
         Ok(match value.0 {
-            1 => Self::Successor0,
+            0 => Self::Successor0,
             _ => return Err(value),
         })
     }

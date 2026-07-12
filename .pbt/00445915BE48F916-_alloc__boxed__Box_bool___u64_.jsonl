@@ -1,0 +1,2 @@
+{"fields":{"alloc::boxed::Box<bool>":[{"fields":{"bool":[{"fields":{},"index":"1"}]},"index":"1"}],"u64":["0"]},"index":"1"}
+{"fields":{"alloc::boxed::Box<bool>":[{"fields":{"bool":[{"fields":{},"index":"2"}]},"index":"1"}],"u64":["0"]},"index":"1"}

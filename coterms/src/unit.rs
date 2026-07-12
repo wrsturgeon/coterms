@@ -1,4 +1,4 @@
-//! Implementations for `bool`.
+//! Implementations for `()`.
 
 use {
     crate::{
@@ -6,40 +6,37 @@ use {
         ErasedLeaf, ErasedNode, Fields, HashMap, HashSet, Registry,
     },
     core::{any::TypeId, array::IntoIter, iter::IntoIterator},
-    pbt::Pbt,
 };
 
-/// Internal nodes of `bool`'s AST.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Pbt)]
-pub enum BoolBranch {}
+/// Internal nodes of `()`'s AST.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum UnitBranch {}
 
-/// Leaves of `bool`'s AST.
+/// Leaves of `()`'s AST.
 #[repr(usize)]
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Pbt)]
-pub enum BoolLeaf {
-    False = 0,
-    True = 1,
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum UnitLeaf {
+    Unit = 0,
 }
 
-/// Nodes of `bool`'s AST.
+/// Nodes of `()`'s AST.
 #[repr(usize)]
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Pbt)]
-pub enum BoolNode {
-    False = 0,
-    True = 1,
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum UnitNode {
+    Unit = 0,
 }
 
-/// Fields of nodes of `bool`'s AST.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Pbt)]
-pub enum BoolField {}
+/// Fields of nodes of `()`'s AST.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum UnitField {}
 
-impl BoolBranch {
+impl UnitBranch {
     /// Convert type information into runtime-only data.
     #[inline]
     pub const fn any(self) -> AnyBranch {
         AnyBranch {
             erased: self.erase(),
-            ty: TypeId::of::<bool>(),
+            ty: TypeId::of::<()>(),
         }
     }
 
@@ -51,18 +48,18 @@ impl BoolBranch {
 
     /// Erase internal/leaf information.
     #[inline]
-    pub const fn node(self) -> BoolNode {
+    pub const fn node(self) -> UnitNode {
         match self {}
     }
 }
 
-impl BoolLeaf {
+impl UnitLeaf {
     /// Convert type information into runtime-only data.
     #[inline]
     pub const fn any(self) -> AnyLeaf {
         AnyLeaf {
             erased: self.erase(),
-            ty: TypeId::of::<bool>(),
+            ty: TypeId::of::<()>(),
         }
     }
 
@@ -75,21 +72,20 @@ impl BoolLeaf {
 
     /// Erase internal/leaf information.
     #[inline]
-    pub const fn node(self) -> BoolNode {
+    pub const fn node(self) -> UnitNode {
         match self {
-            Self::False => BoolNode::False,
-            Self::True => BoolNode::True,
+            Self::Unit => UnitNode::Unit,
         }
     }
 }
 
-impl BoolNode {
+impl UnitNode {
     /// Convert type information into runtime-only data.
     #[inline]
     pub const fn any(self) -> AnyNode {
         AnyNode {
             erased: self.erase(),
-            ty: TypeId::of::<bool>(),
+            ty: TypeId::of::<()>(),
         }
     }
 
@@ -101,19 +97,19 @@ impl BoolNode {
     }
 }
 
-impl BoolField {
+impl UnitField {
     /// Convert type information into runtime-only data.
     #[inline]
     pub const fn any(self) -> AnyField {
         AnyField {
             erased: self.erase(),
-            parent_ty: TypeId::of::<bool>(),
+            parent_ty: TypeId::of::<()>(),
         }
     }
 
     /// Which internal node has this field?
     #[inline]
-    pub const fn branch(self) -> BoolBranch {
+    pub const fn branch(self) -> UnitBranch {
         match self {}
     }
 
@@ -124,12 +120,12 @@ impl BoolField {
     }
 }
 
-impl Dual for bool {
-    type Branch = BoolBranch;
+impl Dual for () {
+    type Branch = UnitBranch;
     type Deref = Self;
-    type Field = BoolField;
-    type Leaf = BoolLeaf;
-    type Node = BoolNode;
+    type Field = UnitField;
+    type Leaf = UnitLeaf;
+    type Node = UnitNode;
 
     #[inline]
     fn deref(&self) -> &Self::Deref {
@@ -143,18 +139,13 @@ impl Dual for bool {
 
     #[inline]
     fn fields(&self) -> Result<HashMap<Self::Field, AnyTerm<'_>>, Self::Leaf> {
-        if *self {
-            Err(BoolLeaf::True)
-        } else {
-            Err(BoolLeaf::False)
-        }
+        Err(UnitLeaf::Unit)
     }
 
     #[inline]
     fn fields_of_node(node: Self::Node) -> Result<HashSet<Self::Field>, Self::Leaf> {
         match node {
-            BoolNode::False => Err(BoolLeaf::False),
-            BoolNode::True => Err(BoolLeaf::True),
+            UnitNode::Unit => Err(UnitLeaf::Unit),
         }
     }
 
@@ -163,75 +154,74 @@ impl Dual for bool {
     where
         F: Fields<Self>,
     {
-        Ok(match node {
-            BoolNode::False => false,
-            BoolNode::True => true,
-        })
+        match node {
+            UnitNode::Unit => Ok(()),
+        }
     }
 
     #[inline]
     fn register_all_field_types(_registry: &mut Registry) {}
 }
 
-impl crate::IntoEnumIterator for BoolNode {
-    type Iterator = IntoIter<Self, 2>;
+impl crate::IntoEnumIterator for UnitNode {
+    type Iterator = IntoIter<Self, 1>;
 
     #[inline]
     fn iter() -> Self::Iterator {
-        IntoIterator::into_iter([Self::False, Self::True])
+        IntoIterator::into_iter([Self::Unit])
     }
 }
 
-impl From<BoolBranch> for BoolNode {
+impl From<UnitBranch> for UnitNode {
     #[inline]
-    fn from(value: BoolBranch) -> Self {
+    fn from(value: UnitBranch) -> Self {
         value.node()
     }
 }
 
-impl From<BoolLeaf> for BoolNode {
+impl From<UnitLeaf> for UnitNode {
     #[inline]
-    fn from(value: BoolLeaf) -> Self {
+    fn from(value: UnitLeaf) -> Self {
         value.node()
     }
 }
 
-impl From<BoolField> for BoolBranch {
+impl From<UnitField> for UnitBranch {
     #[inline]
-    fn from(value: BoolField) -> Self {
+    fn from(value: UnitField) -> Self {
         value.branch()
     }
 }
 
-impl From<BoolBranch> for ErasedBranch {
+impl From<UnitBranch> for ErasedBranch {
     #[inline]
-    fn from(value: BoolBranch) -> Self {
+    fn from(value: UnitBranch) -> Self {
         value.erase()
     }
 }
 
-impl From<BoolLeaf> for ErasedLeaf {
+impl From<UnitLeaf> for ErasedLeaf {
     #[inline]
-    fn from(value: BoolLeaf) -> Self {
+    fn from(value: UnitLeaf) -> Self {
         value.erase()
     }
 }
 
-impl From<BoolNode> for ErasedNode {
+impl From<UnitNode> for ErasedNode {
     #[inline]
-    fn from(value: BoolNode) -> Self {
+    fn from(value: UnitNode) -> Self {
         value.erase()
     }
 }
 
-impl From<BoolField> for ErasedField {
+impl From<UnitField> for ErasedField {
     #[inline]
-    fn from(value: BoolField) -> Self {
+    fn from(value: UnitField) -> Self {
         value.erase()
     }
 }
 
-impl TryFrom<ErasedBranch> for BoolBranch {
+impl TryFrom<ErasedBranch> for UnitBranch {
     type Error = ErasedBranch;
 
     #[inline]
@@ -240,37 +230,46 @@ impl TryFrom<ErasedBranch> for BoolBranch {
     }
 }
 
-impl TryFrom<ErasedLeaf> for BoolLeaf {
+impl TryFrom<ErasedLeaf> for UnitLeaf {
     type Error = ErasedLeaf;
 
     #[inline]
     fn try_from(value: ErasedLeaf) -> Result<Self, Self::Error> {
         match value.0 {
-            0 => Ok(Self::False),
-            1 => Ok(Self::True),
+            0 => Ok(Self::Unit),
             _ => Err(value),
         }
     }
 }
 
-impl TryFrom<ErasedNode> for BoolNode {
+impl TryFrom<ErasedNode> for UnitNode {
     type Error = ErasedNode;
 
     #[inline]
     fn try_from(value: ErasedNode) -> Result<Self, Self::Error> {
         match value.0 {
-            0 => Ok(Self::False),
-            1 => Ok(Self::True),
+            0 => Ok(Self::Unit),
             _ => Err(value),
         }
     }
 }
 
-impl TryFrom<ErasedField> for BoolField {
+impl TryFrom<ErasedField> for UnitField {
     type Error = ErasedField;
 
     #[inline]
     fn try_from(value: ErasedField) -> Result<Self, Self::Error> {
         Err(value)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ErasedLeaf, ErasedNode, UnitLeaf, UnitNode};
+
+    #[test]
+    fn erased_zero_is_the_unit_leaf_and_node() {
+        assert_eq!(UnitLeaf::try_from(ErasedLeaf(0)), Ok(UnitLeaf::Unit));
+        assert_eq!(UnitNode::try_from(ErasedNode(0)), Ok(UnitNode::Unit));
     }
 }

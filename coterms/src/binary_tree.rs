@@ -47,6 +47,16 @@ pub enum BinaryTreeSlot {
     BranchRhs,
 }
 
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Pbt)]
+pub enum BinaryTreeLeafSlot {}
+
+#[repr(usize)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Pbt)]
+pub enum BinaryTreeBranchSlot {
+    BranchLhs,
+    BranchRhs,
+}
+
 impl Dual for BinaryTree {
     type Branch = BinaryTreeBranch;
     type Leaf = BinaryTreeLeaf;
@@ -54,7 +64,7 @@ impl Dual for BinaryTree {
     type Slot = BinaryTreeSlot;
 
     #[inline]
-    fn fields(&self) -> Result<HashMap<Self::Slot, AnyTerm<'_>>, <Self as Dual>::Leaf> {
+    fn fields(&self) -> Result<HashMap<Self::Slot, AnyTerm>, <Self as Dual>::Leaf> {
         match *self {
             Self::Leaf => Err(BinaryTreeLeaf::Leaf),
             Self::Branch { ref lhs, ref rhs } => Ok([

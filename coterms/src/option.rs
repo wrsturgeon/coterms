@@ -48,7 +48,7 @@ where
     type Slot = OptionSlot;
 
     #[inline]
-    fn fields(&self) -> Result<HashMap<Self::Slot, AnyTerm<'_>>, Self::Leaf> {
+    fn fields(&self) -> Result<HashMap<Self::Slot, AnyTerm>, Self::Leaf> {
         match *self {
             None => Err(OptionLeaf::None),
             Some(ref some_0) => {

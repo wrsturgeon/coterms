@@ -1,0 +1,1 @@
+{"fields":{"alloc::sync::Arc<coterms::RootedPath>":[{"fields":{"coterms::RootedPath":[{"fields":{},"index":"1"}]},"index":"1"}],"coterms::ErasedLeaf":[{"fields":{"usize":["1"]},"index":"1"}],"std::collections::hash::map::HashMap<alloc::sync::Arc<coterms::RootedPath>, coterms::ErasedLeaf, ahash::random_state::RandomState>":[{"fields":{},"index":"1"}]},"index":"2"}
