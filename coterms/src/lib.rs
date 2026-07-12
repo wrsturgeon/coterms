@@ -359,10 +359,7 @@ pub struct RootedHole {
 
 /// A type-erased path from some node
 /// all the way up to the global root.
-#[expect(
-    clippy::exhaustive_enums,
-    reason = "intentionally minimal and stable"
-)]
+#[expect(clippy::exhaustive_enums, reason = "intentionally minimal and stable")]
 #[derive(Clone, Eq, Hash, PartialEq, Pbt)]
 pub enum RootedPath {
     /// The root term itself.
