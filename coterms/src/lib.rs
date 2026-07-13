@@ -17,7 +17,7 @@ pub use {
 
 use {
     ahash::RandomState,
-    alloc::sync::Arc,
+    alloc::{sync::Arc, vec::Vec},
     core::{
         any::{self, TypeId},
         fmt,
@@ -192,6 +192,8 @@ where
 pub struct Conversions {
     /// Converts an erased branch discriminant into an erased node discriminant.
     pub branch: fn(ErasedBranch) -> Result<ErasedNode, DualError>,
+    /// Every constructor in [`Dual::Node`] iteration order.
+    pub constructors: Arc<[AnyNode]>,
     /// Converts an erased field discriminant into its branch discriminant.
     pub field: fn(ErasedField) -> Result<ErasedBranch, DualError>,
     /// Returns the canonical type accepted by an erased field.
@@ -926,6 +928,22 @@ where
 }
 
 impl Registry {
+    /// Returns every constructor of one registered type in [`Dual::Node`] iteration order.
+    ///
+    /// The returned constructors share the registry's immutable allocation and
+    /// remain valid after the registry guard is dropped.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DualError::UnregisteredType`] if `ty` is not registered.
+    #[inline]
+    pub fn constructors(&self, ty: TypeId) -> Result<Arc<[AnyNode]>, DualError> {
+        self.dispatch
+            .get(&ty)
+            .map(|conversions| Arc::clone(&conversions.constructors))
+            .ok_or(DualError::UnregisteredType(ty))
+    }
+
     /// Decomposes an erased borrowed term using its registered conversions.
     #[inline]
     fn fields<'term>(
@@ -964,6 +982,13 @@ impl Registry {
         if self.dispatch.contains_key(&ty) {
             return;
         }
+        let constructors: Arc<[AnyNode]> = D::Node::iter()
+            .map(|node| AnyNode {
+                erased: node.into(),
+                ty,
+            })
+            .collect::<Vec<_>>()
+            .into();
         let _: Option<_> = self.dispatch.insert(
             ty,
             Conversions {
@@ -977,6 +1002,7 @@ impl Registry {
                     let node: D::Node = branch.into();
                     Ok(node.into())
                 },
+                constructors,
                 fields: |ErasedTerm { ptr, .. }| {
                     // SAFETY: `AnyTerm::new` stores a pointer tagged with `D::Deref`, and
                     // this closure is looked up by that same type tag.

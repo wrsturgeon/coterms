@@ -251,6 +251,15 @@ impl Enum {
         let fields_of_node = self.dual_fields_of_node();
         let field_type = self.field_type();
         let from_node = self.dual_from_node();
+        let from_node_body = if self.variants.is_empty() {
+            quote! { match node {} }
+        } else {
+            quote! {
+                Ok(match node {
+                    #(#from_node,)*
+                })
+            }
+        };
         let register_all_field_types = self.register_all_field_types();
 
         quote! {
@@ -285,9 +294,7 @@ impl Enum {
                 where
                     F: ::coterms::Fields<Self::Deref>,
                 {
-                    Ok(match node {
-                        #(#from_node,)*
-                    })
+                    #from_node_body
                 }
 
                 #[inline]
@@ -1360,7 +1367,7 @@ impl ::coterms::Dual for Void {
     where
         F: ::coterms::Fields<Self::Deref>,
     {
-        Ok(match node {})
+        match node {}
     }
     #[inline]
     fn register_all_field_types(registry: &mut ::coterms::Registry) {}
