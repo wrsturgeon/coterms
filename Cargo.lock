@@ -109,9 +109,9 @@ checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
 
 [[package]]
 name = "pbt"
-version = "0.5.10"
+version = "0.5.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7d2b6b61a7e03870b44b8b45a3ad57036843ed583a6008dcf2d3f416e7711b3e"
+checksum = "8019028ec7ca603054a5160d652f4d566a351b4f38a7ce2b91032245e5de5b35"
 dependencies = [
  "ahash",
  "getrandom",
@@ -123,9 +123,9 @@ dependencies = [
 
 [[package]]
 name = "pbt-macro2"
-version = "0.5.10"
+version = "0.5.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6ade1753aacc7b6a7ec93e64ba7c246ae27193d1810722c69e815b8e02f0c3ec"
+checksum = "2422ae49392e55cd5a31705a0afee7493390f95e315303199c0fa7c077bca4b0"
 dependencies = [
  "heck",
  "proc-macro2",
@@ -135,9 +135,9 @@ dependencies = [
 
 [[package]]
 name = "pbt-macros"
-version = "0.5.10"
+version = "0.5.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a1882151cc6579ff5ebf3dbabb6551423b46cc1295bfd00450eeb61b5bfc5758"
+checksum = "1ae5282c803969e731b700755d5e21109b64bb5d557860de0fbe031dc7cf6797"
 dependencies = [
  "pbt-macro2",
  "proc-macro2",
@@ -328,6 +328,6 @@ dependencies = [
 
 [[package]]
 name = "zmij"
-version = "1.0.21"
+version = "1.0.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b8848ee67ecc8aedbaf3e4122217aff892639231befc6a1b58d29fff4c2cabaa"
+checksum = "29666d0abbfad1e3dc4dcf6144730dd3a3ab225bbbdac83319345b1b44ccfc1b"
