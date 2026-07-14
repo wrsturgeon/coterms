@@ -125,6 +125,8 @@ mod tests {
     #[test]
     fn erased_debug_uses_source_constructor_and_field_names() {
         let () = register::<EnumShapes<()>>();
+        let () = register::<NamedStruct>();
+        let () = register::<TupleStruct>();
 
         assert_eq!(
             format!("{:?}", <EnumShapes<()> as Dual>::Node::Named),
@@ -153,6 +155,19 @@ mod tests {
             format!("{:?}", <EnumShapes<()> as Dual>::Field::Tuple0.any::<()>()),
             "0"
         );
+        assert_eq!(
+            format!("{:?}", <NamedStruct as Dual>::Node::Struct),
+            "NamedStruct"
+        );
+        assert_eq!(
+            format!("{:?}", <NamedStruct as Dual>::Node::Struct.any()),
+            "NamedStruct"
+        );
+        assert_eq!(
+            format!("{:?}", <TupleStruct as Dual>::Node::Struct),
+            "TupleStruct"
+        );
+        assert_eq!(format!("{:?}", <TupleStruct as Dual>::Field::_0), "0");
     }
 
     #[test]
