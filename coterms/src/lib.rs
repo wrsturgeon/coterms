@@ -67,6 +67,10 @@ pub trait Dual: 'static + Clone {
             Deref = Self::Deref,
         >;
     /// A field selecting one child of a branch.
+    ///
+    /// Its [`fmt::Debug`] representation must be the field's source identifier,
+    /// or its zero-based local index when the source field is unnamed. The
+    /// containing branch already disambiguates equal field names.
     type Field: Copy
         + fmt::Debug
         + Eq
@@ -81,6 +85,9 @@ pub trait Dual: 'static + Clone {
         + TryFrom<ErasedLeaf, Error = ErasedLeaf>
         + Into<Self::Node>;
     /// Any node constructor, encompassing both branches and leaves.
+    ///
+    /// Its [`fmt::Debug`] representation must be the source constructor name.
+    /// For a struct, this is the struct's type name.
     type Node: Copy
         + fmt::Debug
         + Into<ErasedNode>
