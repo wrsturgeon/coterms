@@ -17,7 +17,7 @@ pub use {
 
 use {
     ahash::RandomState,
-    alloc::{sync::Arc, vec::Vec},
+    alloc::{format, sync::Arc, vec::Vec},
     core::{
         any::{self, TypeId},
         fmt,
@@ -196,6 +196,8 @@ pub struct Conversions {
     pub constructors: Arc<[AnyNode]>,
     /// Converts an erased field discriminant into its branch discriminant.
     pub field: fn(ErasedField) -> Result<ErasedBranch, DualError>,
+    /// Source-oriented debug names indexed by erased field discriminant.
+    pub field_names: HashMap<ErasedField, Arc<str>>,
     /// Returns the canonical type accepted by an erased field.
     pub field_type: fn(ErasedField) -> Result<TypeId, DualError>,
     /// Decomposes a borrowed term into erased fields, or returns its leaf.
@@ -207,6 +209,8 @@ pub struct Conversions {
         for<'term> fn(ErasedNode) -> Result<Result<HashSet<ErasedField>, ErasedLeaf>, DualError>,
     /// Converts an erased leaf discriminant into an erased node discriminant.
     pub leaf: fn(ErasedLeaf) -> Result<ErasedNode, DualError>,
+    /// Source-oriented debug names indexed by erased node discriminant.
+    pub node_names: HashMap<ErasedNode, Arc<str>>,
     /// The diagnostic name of the registered canonical term type.
     pub type_name: &'static str,
 }
@@ -454,8 +458,12 @@ impl fmt::Debug for AnyNode {
             reason = "a poisoned lock means another panic already occurred"
         )]
         let registry = REGISTRY.read().unwrap();
-        if let Some(conversions) = registry.dispatch.get(&self.ty) {
-            write!(f, "<{}>::node#{}", conversions.type_name, self.erased.0)
+        if let Some(name) = registry
+            .dispatch
+            .get(&self.ty)
+            .and_then(|conversions| conversions.node_names.get(&self.erased))
+        {
+            f.write_str(name)
         } else {
             f.debug_struct("AnyNode")
                 .field("ty", &self.ty)
@@ -474,8 +482,12 @@ impl fmt::Debug for AnyField {
             reason = "a poisoned lock means another panic already occurred"
         )]
         let registry = REGISTRY.read().unwrap();
-        if let Some(conversions) = registry.dispatch.get(&self.parent_ty) {
-            write!(f, "<{}>::field#{}", conversions.type_name, self.erased.0)
+        if let Some(name) = registry
+            .dispatch
+            .get(&self.parent_ty)
+            .and_then(|conversions| conversions.field_names.get(&self.erased))
+        {
+            f.write_str(name)
         } else {
             f.debug_struct("AnyField")
                 .field("parent_ty", &self.parent_ty)
@@ -982,10 +994,31 @@ impl Registry {
         if self.dispatch.contains_key(&ty) {
             return;
         }
+        let mut field_names: HashMap<ErasedField, Arc<str>> = HashMap::new();
+        let mut node_names: HashMap<ErasedNode, Arc<str>> = HashMap::new();
         let constructors: Arc<[AnyNode]> = D::Node::iter()
-            .map(|node| AnyNode {
-                erased: node.into(),
-                ty,
+            .map(|node| {
+                let node_erased = node.into();
+                let _previous_node_name =
+                    node_names.insert(node_erased, Arc::from(format!("{node:?}")));
+                if let Ok(fields) = D::fields_of_node(node) {
+                    let mut names: Vec<_> = fields
+                        .into_iter()
+                        .map(|field| {
+                            let field_erased = field.into();
+                            let name: Arc<str> = Arc::from(format!("{field:?}"));
+                            (field_erased, name)
+                        })
+                        .collect();
+                    names.sort_unstable_by_key(|entry: &(ErasedField, Arc<str>)| entry.0);
+                    for (field_erased, name) in names {
+                        let _previous_field_name = field_names.insert(field_erased, name);
+                    }
+                }
+                AnyNode {
+                    erased: node_erased,
+                    ty,
+                }
             })
             .collect::<Vec<_>>()
             .into();
@@ -1003,6 +1036,7 @@ impl Registry {
                     Ok(node.into())
                 },
                 constructors,
+                field_names,
                 fields: |ErasedTerm { ptr, .. }| {
                     // SAFETY: `AnyTerm::new` stores a pointer tagged with `D::Deref`, and
                     // this closure is looked up by that same type tag.
@@ -1038,6 +1072,7 @@ impl Registry {
                     let node: D::Node = leaf.into();
                     Ok(node.into())
                 },
+                node_names,
                 field: |erased_field| {
                     let field: D::Field = erased_field.try_into().map_err(|erased| {
                         DualError::InvalidField(AnyField {

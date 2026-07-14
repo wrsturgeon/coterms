@@ -322,6 +322,7 @@ impl Enum {
         let branch_variants = self.branch_variants();
         let field_to_branch = self.field_to_branch();
         let field_any = self.any_impl("Field", "AnyField", "parent_ty");
+        let field_type_debug_arms = self.field_type_debug_arms();
         let field_variants = self.field_variants();
         let fields_in = self.fields_in();
         let fields_in_structs = self.fields_in_structs();
@@ -334,7 +335,7 @@ impl Enum {
             erased_from_impl("Branch", "ErasedBranch", branch_variants.is_empty());
         let branch_unreachable = unreachable_code_allow(branch_variants.is_empty());
         let node_variants = self.node_variants();
-        let field_enum = enum_definition("Field", &field_variants);
+        let field_enum = field_enum_definition(&field_variants, &field_type_debug_arms);
         let field_to_erased = erased_from_impl("Field", "ErasedField", field_variants.is_empty());
         let field_unreachable = unreachable_code_allow(field_variants.is_empty());
         let leaf_enum = enum_definition("Leaf", &leaf_variants);
@@ -471,6 +472,28 @@ impl Enum {
                 let field_ident = &field.ident;
                 let ty = &field.ty;
                 quote! { #module::Field::#field_ident => ::core::any::TypeId::of::<<#ty as ::coterms::Dual>::Deref>() }
+            })
+            .collect()
+    }
+
+    /// Generated source-oriented `Debug` arms for global fields.
+    fn field_type_debug_arms(&self) -> Vec<TokenStream> {
+        self.variants
+            .iter()
+            .flat_map(|variant| &variant.fields)
+            .map(|field| {
+                let ident = &field.ident;
+                let name = field.source_ident.as_ref().map_or_else(
+                    || field.local.to_string(),
+                    |source_ident| {
+                        let source_name = source_ident.to_string();
+                        source_name
+                            .strip_prefix("r#")
+                            .unwrap_or(&source_name)
+                            .to_owned()
+                    },
+                );
+                quote! { Self::#ident => formatter.write_str(#name) }
             })
             .collect()
     }
@@ -871,6 +894,46 @@ pub fn incremental(attr: TokenStream, _item: TokenStream) -> TokenStream {
     TokenStream::new()
 }
 
+/// Generate the global field enum with source-oriented debug names.
+fn field_enum_definition(variants: &[TokenStream], debug_arms: &[TokenStream]) -> TokenStream {
+    if variants.is_empty() {
+        quote! {
+            #[derive(Clone, Copy, Eq, Hash, PartialEq)]
+            pub enum Field {}
+
+            impl ::core::fmt::Debug for Field {
+                #[inline(always)]
+                fn fmt(
+                    &self,
+                    _formatter: &mut ::core::fmt::Formatter<'_>,
+                ) -> ::core::fmt::Result {
+                    match *self {}
+                }
+            }
+        }
+    } else {
+        quote! {
+            #[repr(usize)]
+            #[derive(Clone, Copy, Eq, Hash, PartialEq)]
+            pub enum Field {
+                #(#variants,)*
+            }
+
+            impl ::core::fmt::Debug for Field {
+                #[inline(always)]
+                fn fmt(
+                    &self,
+                    formatter: &mut ::core::fmt::Formatter<'_>,
+                ) -> ::core::fmt::Result {
+                    match *self {
+                        #(#debug_arms,)*
+                    }
+                }
+            }
+        }
+    }
+}
+
 /// Generate one local tag enum, using `repr(usize)` exactly when inhabited.
 fn enum_definition(name: &str, variants: &[TokenStream]) -> TokenStream {
     let ident = format_ident!("{}", name);
@@ -1118,8 +1181,17 @@ pub mod coterm_void {
     pub enum Branch {}
     #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
     pub enum Leaf {}
-    #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+    #[derive(Clone, Copy, Eq, Hash, PartialEq)]
     pub enum Field {}
+    impl ::core::fmt::Debug for Field {
+        #[inline(always)]
+        fn fmt(
+            &self,
+            _formatter: &mut ::core::fmt::Formatter<'_>,
+        ) -> ::core::fmt::Result {
+            match *self {}
+        }
+    }
     #[derive(Clone, Debug, Eq, Hash, PartialEq)]
     pub struct Match {}
     impl Branch {
@@ -1419,9 +1491,20 @@ pub mod coterm_peano {
         Zero = 0,
     }
     #[repr(usize)]
-    #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+    #[derive(Clone, Copy, Eq, Hash, PartialEq)]
     pub enum Field {
         Successor0 = 0,
+    }
+    impl ::core::fmt::Debug for Field {
+        #[inline(always)]
+        fn fmt(
+            &self,
+            formatter: &mut ::core::fmt::Formatter<'_>,
+        ) -> ::core::fmt::Result {
+            match *self {
+                Self::Successor0 => formatter.write_str("0"),
+            }
+        }
     }
     #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
     pub enum FieldInZero {}
@@ -1734,9 +1817,20 @@ pub mod coterm_singleton {
     #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
     pub enum Leaf {}
     #[repr(usize)]
-    #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+    #[derive(Clone, Copy, Eq, Hash, PartialEq)]
     pub enum Field {
         Value = 0,
+    }
+    impl ::core::fmt::Debug for Field {
+        #[inline(always)]
+        fn fmt(
+            &self,
+            formatter: &mut ::core::fmt::Formatter<'_>,
+        ) -> ::core::fmt::Result {
+            match *self {
+                Self::Value => formatter.write_str("value"),
+            }
+        }
     }
     #[repr(usize)]
     #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
