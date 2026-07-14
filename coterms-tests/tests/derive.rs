@@ -7,7 +7,7 @@ mod tests {
     extern crate alloc;
 
     use {
-        alloc::sync::Arc,
+        alloc::{format, sync::Arc},
         core::{any::TypeId, fmt},
         coterms::{AnyNode, Dual, DualError, Frontier, REGISTRY, from_pinned, pin_up, register},
     };
@@ -119,6 +119,39 @@ mod tests {
         assert!(
             Arc::ptr_eq(&first, &second),
             "repeated enumeration must share the registered constructor allocation"
+        );
+    }
+
+    #[test]
+    fn erased_debug_uses_source_constructor_and_field_names() {
+        let () = register::<EnumShapes<()>>();
+
+        assert_eq!(
+            format!("{:?}", <EnumShapes<()> as Dual>::Node::Named),
+            "Named"
+        );
+        assert_eq!(
+            format!("{:?}", <EnumShapes<()> as Dual>::Node::Named.any::<()>()),
+            "Named"
+        );
+        assert_eq!(
+            format!("{:?}", <EnumShapes<()> as Dual>::Field::NamedFirst),
+            "first"
+        );
+        assert_eq!(
+            format!(
+                "{:?}",
+                <EnumShapes<()> as Dual>::Field::NamedFirst.any::<()>()
+            ),
+            "first"
+        );
+        assert_eq!(
+            format!("{:?}", <EnumShapes<()> as Dual>::Field::Tuple0),
+            "0"
+        );
+        assert_eq!(
+            format!("{:?}", <EnumShapes<()> as Dual>::Field::Tuple0.any::<()>()),
+            "0"
         );
     }
 
