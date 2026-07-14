@@ -334,6 +334,7 @@ impl Enum {
         let branch_to_erased =
             erased_from_impl("Branch", "ErasedBranch", branch_variants.is_empty());
         let branch_unreachable = unreachable_code_allow(branch_variants.is_empty());
+        let node_type_debug_arms = self.node_type_debug_arms();
         let node_variants = self.node_variants();
         let field_enum = field_enum_definition(&field_variants, &field_type_debug_arms);
         let field_to_erased = erased_from_impl("Field", "ErasedField", field_variants.is_empty());
@@ -342,7 +343,7 @@ impl Enum {
         let leaf_to_erased = erased_from_impl("Leaf", "ErasedLeaf", leaf_variants.is_empty());
         let leaf_unreachable = unreachable_code_allow(leaf_variants.is_empty());
         let node_any = self.any_impl("Node", "AnyNode", "ty");
-        let node_enum = enum_definition("Node", &node_variants);
+        let node_enum = node_enum_definition(&node_variants, &node_type_debug_arms);
         let node_into_enum_iterator = self.node_into_enum_iterator();
         let node_to_erased = erased_from_impl("Node", "ErasedNode", node_variants.is_empty());
         let try_branch_arms = self.try_branch_arms();
@@ -639,6 +640,21 @@ impl Enum {
                 }
             }
         }
+    }
+
+    /// Generated source-oriented `Debug` arms for nodes.
+    fn node_type_debug_arms(&self) -> Vec<TokenStream> {
+        self.variants
+            .iter()
+            .map(|variant| {
+                let ident = &variant.ident;
+                let name = match variant.source {
+                    VariantSource::Enum => variant.ident.to_string(),
+                    VariantSource::Struct => self.ident.to_string(),
+                };
+                quote! { Self::#ident => formatter.write_str(#name) }
+            })
+            .collect()
     }
 
     /// Generated `Node` enum variants.
@@ -1054,6 +1070,46 @@ fn fields(
     }
 }
 
+/// Generate the node enum with source-oriented debug names.
+fn node_enum_definition(variants: &[TokenStream], debug_arms: &[TokenStream]) -> TokenStream {
+    if variants.is_empty() {
+        quote! {
+            #[derive(Clone, Copy, Eq, Hash, PartialEq)]
+            pub enum Node {}
+
+            impl ::core::fmt::Debug for Node {
+                #[inline(always)]
+                fn fmt(
+                    &self,
+                    _formatter: &mut ::core::fmt::Formatter<'_>,
+                ) -> ::core::fmt::Result {
+                    match *self {}
+                }
+            }
+        }
+    } else {
+        quote! {
+            #[repr(usize)]
+            #[derive(Clone, Copy, Eq, Hash, PartialEq)]
+            pub enum Node {
+                #(#variants,)*
+            }
+
+            impl ::core::fmt::Debug for Node {
+                #[inline(always)]
+                fn fmt(
+                    &self,
+                    formatter: &mut ::core::fmt::Formatter<'_>,
+                ) -> ::core::fmt::Result {
+                    match *self {
+                        #(#debug_arms,)*
+                    }
+                }
+            }
+        }
+    }
+}
+
 /// Build a generated helper field identifier that cannot collide with keywords.
 fn raw_aware_ident(text: &str) -> Ident {
     Ident::new_raw(&format!("coterms_{text}"), Span::call_site())
@@ -1168,8 +1224,17 @@ pub enum Void {}
         .unwrap();
         let expected = r#"
 pub mod coterm_void {
-    #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+    #[derive(Clone, Copy, Eq, Hash, PartialEq)]
     pub enum Node {}
+    impl ::core::fmt::Debug for Node {
+        #[inline(always)]
+        fn fmt(
+            &self,
+            _formatter: &mut ::core::fmt::Formatter<'_>,
+        ) -> ::core::fmt::Result {
+            match *self {}
+        }
+    }
     impl ::coterms::IntoEnumIterator for Node {
         type Iterator = ::core::array::IntoIter<Self, 0>;
         #[inline(always)]
@@ -1468,10 +1533,22 @@ pub enum Peano {
         let expected = r#"
 pub mod coterm_peano {
     #[repr(usize)]
-    #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+    #[derive(Clone, Copy, Eq, Hash, PartialEq)]
     pub enum Node {
         Zero = 0,
         Successor = 1,
+    }
+    impl ::core::fmt::Debug for Node {
+        #[inline(always)]
+        fn fmt(
+            &self,
+            formatter: &mut ::core::fmt::Formatter<'_>,
+        ) -> ::core::fmt::Result {
+            match *self {
+                Self::Zero => formatter.write_str("Zero"),
+                Self::Successor => formatter.write_str("Successor"),
+            }
+        }
     }
     impl ::coterms::IntoEnumIterator for Node {
         type Iterator = ::core::array::IntoIter<Self, 2>;
@@ -1798,9 +1875,20 @@ pub struct Singleton {
         let expected = r#"
 pub mod coterm_singleton {
     #[repr(usize)]
-    #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+    #[derive(Clone, Copy, Eq, Hash, PartialEq)]
     pub enum Node {
         Struct = 0,
+    }
+    impl ::core::fmt::Debug for Node {
+        #[inline(always)]
+        fn fmt(
+            &self,
+            formatter: &mut ::core::fmt::Formatter<'_>,
+        ) -> ::core::fmt::Result {
+            match *self {
+                Self::Struct => formatter.write_str("Singleton"),
+            }
+        }
     }
     impl ::coterms::IntoEnumIterator for Node {
         type Iterator = ::core::array::IntoIter<Self, 1>;
